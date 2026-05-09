@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meituan Together | 一起去</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="phone-shell">
+      <header class="app-header">
+        <div>
+          <p id="areaLabel" class="eyebrow">Westwood 生活圈</p>
+          <h1>一起去</h1>
+        </div>
+        <button class="icon-button" id="resetDemo" aria-label="重置">↻</button>
+      </header>
+
+      <section id="mapPage" class="page is-active"></section>
+      <section id="aiPage" class="page"></section>
+      <section id="chatPage" class="page"></section>
+      <section id="successPage" class="page"></section>
+      <section id="profilePage" class="page"></section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav-item is-active" data-page="map">地图</button>
+      <button class="nav-item" data-page="ai">AI匹配</button>
+      <button class="nav-item" data-page="chat">消息</button>
+      <button class="nav-item" data-page="profile">我的</button>
+    </nav>
+
+    
+    <script src="./mockData.js?v=20260509e"></script>
+    <script src="./utils/matching.js?v=20260509e"></script>
+    <script src="./app.js?v=20260509e"></script>
+  </body>
+</html>
