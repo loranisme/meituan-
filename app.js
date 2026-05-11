@@ -1,6 +1,28 @@
 const { pois, users, backgroundUsers, buddyDemands, matchPlans, chatThreads, deals, replanningEvents, scenes, area } = window.mockData;
 const { parseIntent, runMatching, replanMatch } = window.MatchingUtils;
 
+const PLAN_STATUS = Object.freeze({
+  IDLE: "idle",
+  MATCHED: "matched",
+  NEGOTIATING: "negotiating",
+  PENDING_LOCK: "pending_lock",
+  LOCKED_WAITING_PEER: "locked_waiting_peer",
+  CONFIRMED: "confirmed",
+  REJECTED: "rejected",
+  FALLBACK_READY: "fallback_ready"
+});
+
+const PLAN_STATUS_META = Object.freeze({
+  [PLAN_STATUS.IDLE]: { label: "待发起", progress: 5 },
+  [PLAN_STATUS.MATCHED]: { label: "已匹配待沟通", progress: 20 },
+  [PLAN_STATUS.NEGOTIATING]: { label: "沟通中", progress: 45 },
+  [PLAN_STATUS.PENDING_LOCK]: { label: "待锁定诚意金", progress: 58 },
+  [PLAN_STATUS.LOCKED_WAITING_PEER]: { label: "已锁定，待对方确认", progress: 75 },
+  [PLAN_STATUS.CONFIRMED]: { label: "双方确认成局", progress: 100 },
+  [PLAN_STATUS.REJECTED]: { label: "对方拒绝", progress: 28 },
+  [PLAN_STATUS.FALLBACK_READY]: { label: "候补方案已就绪", progress: 55 }
+});
+
 const appState = {
   currentPage: "map",
   selectedCategory: "全部",
@@ -13,9 +35,16 @@ const appState = {
   selectedMatch: null,
   generatedPlan: null,
   chatThread: null,
+  planStatus: PLAN_STATUS.IDLE,
   currentUserConfirmed: false,
   matchedUserConfirmed: false,
   planConfirmed: false,
+  depositSheetVisible: false,
+  depositAgreementChecked: false,
+  depositLocked: false,
+  fallbackSuggestion: "",
+  sparseMode: false,
+  debugMeta: null,
   replanningNotice: "",
   aiLoading: false,
   aiStep: -1,
@@ -44,6 +73,36 @@ const AMAP_TYPE_MAP = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+function setPlanStatus(nextStatus) {
+  appState.planStatus = nextStatus;
+  appState.planConfirmed = nextStatus === PLAN_STATUS.CONFIRMED;
+  appState.currentUserConfirmed = nextStatus === PLAN_STATUS.LOCKED_WAITING_PEER || nextStatus === PLAN_STATUS.CONFIRMED;
+  appState.matchedUserConfirmed = nextStatus === PLAN_STATUS.CONFIRMED;
+  if (appState.chatThread) appState.chatThread.plan_status = nextStatus;
+}
+
+function currentPlanStatusMeta() {
+  return PLAN_STATUS_META[appState.planStatus] || PLAN_STATUS_META[PLAN_STATUS.IDLE];
+}
+
+function buildConcurrencyMeta(seed) {
+  const stamp = Date.now();
+  return {
+    match_version: `v${stamp}-${seed + 1}`,
+    reservation_ttl: 180,
+    idempotency_key: `idem_${stamp}_${seed + 1}`
+  };
+}
+
+function logConcurrencyMeta(meta) {
+  if (!meta) return;
+  console.info("[debug-concurrency]", {
+    match_version: meta.match_version,
+    reservation_ttl: meta.reservation_ttl,
+    idempotency_key: meta.idempotency_key
+  });
+}
 
 function init() {
   $("#areaLabel").textContent = `${area} · ${users.length + backgroundUsers.length} 人活跃`;
@@ -81,6 +140,7 @@ function render() {
   renderChatPage();
   renderSuccessPage();
   renderProfilePage();
+  renderDepositSheet();
   renderToast();
 }
 
@@ -588,12 +648,19 @@ async function runAI() {
     await sleep(560 + step * 90);
   }
   appState.parsedIntent = parseIntent(appState.userInput);
-  const availablePOIs = gaodePOIs.length ? gaodePOIs : pois;
-  appState.matchResults = runMatching(appState.parsedIntent, users, availablePOIs).map((result) => ({ ...result, intent: appState.parsedIntent }));
+  const sparseSupply = window.mockData.sparseSupply || { users: users.slice(0, 2), pois: pois.slice(0, 2) };
+  const availablePOIs = appState.sparseMode ? sparseSupply.pois : (gaodePOIs.length ? gaodePOIs : pois);
+  const availableUsers = appState.sparseMode ? sparseSupply.users : users;
+  appState.matchResults = runMatching(appState.parsedIntent, availableUsers, availablePOIs).map((result, index) => {
+    const concurrency = buildConcurrencyMeta(index);
+    logConcurrencyMeta(concurrency);
+    return { ...result, intent: appState.parsedIntent, concurrency };
+  });
   if (appState.poiConstraint) {
     appState.matchResults = appState.matchResults.map((result, index) => index === 0 && isPoiCompatible(appState.parsedIntent, appState.poiConstraint) ? ({ ...result, poi: appState.poiConstraint, place_score: 90, total_score: Math.max(result.total_score, 88), backup_poi: findDealBackup(appState.poiConstraint), explanation: result.explanation.replace(result.poi.name, appState.poiConstraint.name) }) : result);
   }
   appState.generatedPlan = appState.matchResults[0] || null;
+  appState.debugMeta = appState.generatedPlan ? appState.generatedPlan.concurrency : null;
   appState.aiLoading = false;
   appState.aiStep = -1;
   render();
@@ -612,6 +679,10 @@ function renderAIPage() {
         <button data-prompt="今晚想吃夜宵烧烤，预算 60 元以内，小组轻松聊天。">夜宵烧烤</button>
       </div>
       <button class="primary-button wide ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "AI 正在匹配..." : "开始 AI 匹配"}</button>
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:12px;color:#6b7280;">
+        <input id="sparseModeToggle" type="checkbox" ${appState.sparseMode ? "checked" : ""} />
+        稀疏模式（低供给演示）
+      </label>
     </section>
     ${renderAIProcess()}
     ${renderIntentCard()}
@@ -619,6 +690,13 @@ function renderAIPage() {
   `;
   $("#intentInput").addEventListener("input", (event) => { appState.userInput = event.target.value; });
   $("#runAIButton").addEventListener("click", runAI);
+  const sparseModeToggle = $("#sparseModeToggle");
+  if (sparseModeToggle) {
+    sparseModeToggle.addEventListener("change", (event) => {
+      appState.sparseMode = event.target.checked;
+      showToast(appState.sparseMode ? "已开启稀疏供给演示" : "已关闭稀疏供给演示");
+    });
+  }
   $$("#aiPage [data-prompt]").forEach((button) => {
     button.addEventListener("click", () => {
       appState.userInput = button.dataset.prompt;
@@ -655,12 +733,16 @@ function renderIntentCard() {
     return `<section class="card ai-state"><div class="analyzing-dot"></div><div><b>AI 正在等待输入</b><p>输入需求后会解析预算、时间、品类、社交风格和距离。</p></div></section>`;
   }
   const i = appState.parsedIntent;
+  const confidenceLow = i.parse_layer === "low_confidence";
   return `
     <section class="card ai-state is-done">
       <div class="analyzing-dot"></div>
       <div>
         <b>AI 已完成解析</b>
         <p>${i.activity_type} · ${i.category_preference} · ¥${i.budget_max} 以内 · ${i.social_style} · ${i.group_size} · ${i.target_time}</p>
+        <p style="margin-top:6px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
+          ${confidenceLow ? "低置信度待澄清" : "规则解析成功"}（置信度 ${Math.round((i.parse_confidence || 0.8) * 100)}%）
+        </p>
       </div>
     </section>
   `;
@@ -669,7 +751,13 @@ function renderIntentCard() {
 function renderMatchResults() {
   if (appState.aiLoading) return "";
   if (!appState.matchResults.length && appState.aiHasRun) {
-    return `<section class="card empty-state result-fade"><h2>当前没有完全匹配的搭子</h2><p>AI 已为你推荐最接近的方案。</p></section>`;
+    return `
+      <section class="card empty-state result-fade">
+        <h2>当前没有完全匹配的搭子</h2>
+        <p>${appState.sparseMode ? "当前供给较低，已进入稀疏兜底。" : "AI 已为你推荐最接近的方案。"}</p>
+      </section>
+      ${appState.sparseMode ? `<section class="card" style="margin-top:8px;"><b>兜底建议</b><p style="margin-top:6px;color:#6b7280;">建议放宽时间或预算后重试，或切换到“今晚/周末”以扩大候选池。</p></section>` : ""}
+    `;
   }
   if (!appState.matchResults.length) return "";
   return `
@@ -764,9 +852,12 @@ function renderMatchCard(match, index) {
 
 function selectMatch(match) {
   appState.selectedMatch = { ...match };
-  appState.currentUserConfirmed = false;
-  appState.matchedUserConfirmed = false;
-  appState.planConfirmed = false;
+  appState.depositSheetVisible = false;
+  appState.depositAgreementChecked = false;
+  appState.depositLocked = false;
+  appState.fallbackSuggestion = "";
+  appState.debugMeta = appState.selectedMatch.concurrency || appState.debugMeta;
+  setPlanStatus(PLAN_STATUS.MATCHED);
   appState.pendingSuccess = false;
   appState.replanningNotice = "";
   appState.chatThread = buildChatThread(appState.selectedMatch);
@@ -781,7 +872,7 @@ function buildChatThread(match) {
       { sender: "ai", text: openingMessage(match), timestamp: "18:05" },
       ...scenarioMessages(match)
     ],
-    plan_status: "pending",
+    plan_status: PLAN_STATUS.MATCHED,
     current_user_confirmed: false,
     matched_user_confirmed: false
   };
@@ -885,6 +976,7 @@ function renderChatPage() {
 
   const match = appState.selectedMatch;
   const deal = getDeal(match.poi.poi_id);
+  const planMeta = currentPlanStatusMeta();
   $("#chatPage").innerHTML = `
     <section class="chat-profile card">
       <div class="avatar">${match.user.nickname[0]}</div>
@@ -905,13 +997,23 @@ function renderChatPage() {
       <button class="safety-button" id="safetyOptions">🛡 安全选项</button>
     </section>
     ${appState.replanningNotice ? `<div class="notice-card">${appState.replanningNotice}</div>` : ""}
+    <section class="card" style="padding:10px 14px;">
+      <p class="eyebrow" style="margin-bottom:6px;">当前局态</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;">
+        <b>${planMeta.label}</b>
+        <span style="color:#6b7280;">${planMeta.progress}%</span>
+      </div>
+      <div style="margin-top:8px;height:6px;background:#e5e7eb;border-radius:999px;overflow:hidden;">
+        <div style="height:100%;width:${planMeta.progress}%;background:linear-gradient(90deg,#f97316,#fb923c);"></div>
+      </div>
+    </section>
     <section class="plan-card card">
       <p class="eyebrow">方案确认</p>
       <h2>${match.poi.name}</h2>
       <p>${match.suggested_time} · ${match.intent.group_size} · 预算 ¥${match.intent.budget_min}–${match.intent.budget_max}</p>
       <p class="muted">${match.poi.sub_category} · 人均 ¥${match.poi.avg_price} · 等待 ${match.poi.wait_time_min} 分钟 · 备选 ${match.backup_poi ? match.backup_poi.name : "同类附近地点"}</p>
       <div class="deal-strip">${deal.title}</div>
-      <p class="wait-status">${appState.planConfirmed ? "双方已确认" : appState.currentUserConfirmed ? "等待对方确认" : "等待你确认"}</p>
+      <p class="wait-status">${planMeta.label}</p>
       <div class="confirm-row">
         <span class="${appState.currentUserConfirmed ? "ok" : ""}">我 ${appState.currentUserConfirmed ? "已确认" : "待确认"}</span>
         <span class="${appState.matchedUserConfirmed ? "ok" : ""}">对方 ${appState.matchedUserConfirmed ? "已确认" : "待确认"}</span>
@@ -920,7 +1022,10 @@ function renderChatPage() {
         <button class="primary-button" id="confirmMatch">我确认</button>
         <button class="secondary-button" id="changePlace">换地点</button>
         <button class="secondary-button" id="simulateWait">模拟餐厅排队变长</button>
+        <button class="secondary-button" id="simulateReject">模拟对方拒绝</button>
       </div>
+      ${appState.fallbackSuggestion ? `<p style="margin-top:8px;color:#92400e;background:#fffbeb;border-radius:10px;padding:8px 10px;">${appState.fallbackSuggestion}</p>` : ""}
+      ${appState.debugMeta ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#6b7280;">调试字段（并发叙事）</summary><p style="margin-top:6px;font-size:12px;color:#6b7280;">match_version: ${appState.debugMeta.match_version}<br/>reservation_ttl: ${appState.debugMeta.reservation_ttl}<br/>idempotency_key: ${appState.debugMeta.idempotency_key}</p></details>` : ""}
     </section>
     <section class="messages-card card">
       ${appState.chatThread.messages.map(renderMessage).join("")}
@@ -937,6 +1042,7 @@ function renderChatPage() {
   $("#confirmMatch").addEventListener("click", confirmMatch);
   $("#changePlace").addEventListener("click", () => applyReplan("change_place"));
   $("#simulateWait").addEventListener("click", () => applyReplan("waiting_time_change"));
+  $("#simulateReject").addEventListener("click", simulateMatchReject);
   $("#safetyOptions").addEventListener("click", () => showToast("已开启行程共享 · 紧急联系人已通知"));
   $("#sendMessage").addEventListener("click", sendChatMessage);
   $("#chatInput").addEventListener("keydown", (event) => {
@@ -978,17 +1084,21 @@ function renderMessage(message) {
 }
 
 function confirmMatch() {
-  if (appState.pendingSuccess || appState.planConfirmed) return;
-  appState.currentUserConfirmed = true;
+  if (appState.pendingSuccess || appState.planStatus === PLAN_STATUS.CONFIRMED) return;
+  if (!appState.depositLocked) {
+    appState.depositSheetVisible = true;
+    setPlanStatus(PLAN_STATUS.PENDING_LOCK);
+    render();
+    return;
+  }
+  setPlanStatus(PLAN_STATUS.LOCKED_WAITING_PEER);
   appState.chatThread.current_user_confirmed = true;
   appState.chatThread.messages.push({ sender: "user_current", text: "我确认这个方案。", timestamp: nowTime() });
   render();
   setTimeout(() => {
-    appState.matchedUserConfirmed = true;
-    appState.planConfirmed = true;
+    setPlanStatus(PLAN_STATUS.CONFIRMED);
     appState.pendingSuccess = true;
     appState.chatThread.matched_user_confirmed = true;
-    appState.chatThread.plan_status = "confirmed";
     appState.chatThread.messages.push({ sender: "matched_user", text: "我也确认，待会见 😊", timestamp: nowTime() });
     // Create group chat
     const gc = buildGroupChat(appState.selectedMatch);
@@ -1005,11 +1115,36 @@ function confirmMatch() {
 function applyReplan(eventType) {
   const replanPOIs = gaodePOIs.length ? gaodePOIs : pois;
   appState.selectedMatch = replanMatch(appState.selectedMatch, eventType, replanPOIs);
+  appState.depositLocked = false;
+  appState.depositAgreementChecked = false;
+  appState.fallbackSuggestion = "";
+  setPlanStatus(PLAN_STATUS.NEGOTIATING);
   appState.replanningNotice = appState.selectedMatch.replanning_notice;
-  appState.currentUserConfirmed = false;
-  appState.matchedUserConfirmed = false;
-  appState.planConfirmed = false;
   appState.chatThread.messages.push({ sender: "ai", text: appState.replanningNotice, timestamp: "18:12" });
+  render();
+}
+
+function simulateMatchReject() {
+  if (!appState.selectedMatch || !appState.chatThread) return;
+  setPlanStatus(PLAN_STATUS.REJECTED);
+  appState.depositLocked = false;
+  appState.chatThread.messages.push({ sender: "matched_user", text: "我这边临时有事，这局先不过去了。", timestamp: nowTime() });
+  const alternatives = appState.matchResults.filter((item) => item.match_id !== appState.selectedMatch.match_id);
+  const planC = alternatives[1] || alternatives[0];
+  if (planC) {
+    appState.selectedMatch = { ...planC, intent: appState.selectedMatch.intent };
+    appState.debugMeta = appState.selectedMatch.concurrency || appState.debugMeta;
+    appState.fallbackSuggestion = `已自动切到候补 ${alternatives[1] ? "C" : "B"}：${planC.user.nickname} @ ${planC.poi.name}（${planC.total_score}%）。`;
+    appState.chatThread.messages.push({
+      sender: "ai",
+      text: `${appState.fallbackSuggestion} 基于现有候选列表重排，未引入额外算法。`,
+      timestamp: nowTime()
+    });
+    setPlanStatus(PLAN_STATUS.FALLBACK_READY);
+  } else {
+    appState.fallbackSuggestion = "暂无候补 C，建议降级为“仅保留地点 + 放宽时间”后再匹配。";
+    appState.chatThread.messages.push({ sender: "ai", text: appState.fallbackSuggestion, timestamp: nowTime() });
+  }
   render();
 }
 
@@ -1018,6 +1153,7 @@ function sendChatMessage() {
   const text = input.value.trim();
   if (!text || !appState.chatThread) return;
   appState.chatThread.messages.push({ sender: "user_current", text, timestamp: "18:13" });
+  if (appState.planStatus === PLAN_STATUS.MATCHED) setPlanStatus(PLAN_STATUS.NEGOTIATING);
   input.value = "";
   render();
 }
@@ -1026,6 +1162,9 @@ function handleQuickReply(text) {
   if (text === "想换一家") {
     applyReplan("change_place");
     return;
+  }
+  if (text === "预算有点高") {
+    setPlanStatus(PLAN_STATUS.NEGOTIATING);
   }
   if (text === "直接确认") {
     confirmMatch();
@@ -1050,6 +1189,9 @@ function renderSuccessPage() {
         <p><b>预算</b><span>¥${appState.selectedMatch.intent.budget_min}–${appState.selectedMatch.intent.budget_max}</span></p>
         <p><b>距离</b><span>${appState.selectedMatch.poi.distance_km}km</span></p>
       </div>
+      <p style="margin-top:8px;font-size:13px;color:${appState.depositLocked ? "#15803d" : "#6b7280"};">
+        诚意金状态：${appState.depositLocked ? "已锁定（满足成局前置条件）" : "已解锁（发生改约/拒绝后释放）"}
+      </p>
       <div class="deal-box">
         <b>${deal.title}</b>
         <p>${deal.deal_type} · 原价 ¥${deal.original_price} · 优惠价 ¥${deal.discount_price}</p>
@@ -1145,6 +1287,59 @@ function showToast(message) {
     appState.toast = "";
     renderToast();
   }, 1800);
+}
+
+function renderDepositSheet() {
+  let sheet = document.getElementById("depositSheetOverlay");
+  if (!appState.depositSheetVisible) {
+    if (sheet) sheet.remove();
+    return;
+  }
+  if (!sheet) {
+    sheet = document.createElement("div");
+    sheet.id = "depositSheetOverlay";
+    document.body.appendChild(sheet);
+  }
+  sheet.className = "modal-overlay";
+  sheet.innerHTML = `
+    <div class="modal-sheet" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
+      <div class="sheet-grip"></div>
+      <h3 style="margin:4px 0 10px;">支付意愿锁定</h3>
+      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;">规则摘要：T-30 退出扣 50% 作为演示（非真实支付流程）。</p>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;">
+        <input type="checkbox" id="depositAgreement" ${appState.depositAgreementChecked ? "checked" : ""} />
+        我同意冻结诚意金用于锁定本次成局意愿
+      </label>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="secondary-button" id="cancelDepositSheet" style="flex:1;">再想想</button>
+        <button class="primary-button" id="confirmDepositSheet" style="flex:1;" ${appState.depositAgreementChecked ? "" : "disabled"}>锁定并继续</button>
+      </div>
+    </div>
+  `;
+  sheet.onclick = (event) => {
+    if (event.target === sheet) {
+      appState.depositSheetVisible = false;
+      if (appState.planStatus === PLAN_STATUS.PENDING_LOCK) setPlanStatus(PLAN_STATUS.MATCHED);
+      render();
+    }
+  };
+  const agreement = document.getElementById("depositAgreement");
+  agreement.onchange = (event) => {
+    appState.depositAgreementChecked = event.target.checked;
+    renderDepositSheet();
+  };
+  document.getElementById("cancelDepositSheet").onclick = () => {
+    appState.depositSheetVisible = false;
+    if (appState.planStatus === PLAN_STATUS.PENDING_LOCK) setPlanStatus(PLAN_STATUS.MATCHED);
+    render();
+  };
+  document.getElementById("confirmDepositSheet").onclick = () => {
+    if (!appState.depositAgreementChecked) return;
+    appState.depositLocked = true;
+    appState.depositSheetVisible = false;
+    showToast("诚意金意愿已锁定（演示态）");
+    confirmMatch();
+  };
 }
 
 function renderToast() {

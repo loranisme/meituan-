@@ -3,43 +3,59 @@
     const text = String(input || "").trim();
     let activity_type = "饭搭子";
     let category_preference = "韩餐";
+    const parseSignals = [];
 
     if (/KTV|ktv|唱歌|K歌|欢唱/.test(text)) {
       activity_type = "KTV搭子";
       category_preference = "KTV";
+      parseSignals.push("activity");
     } else if (/酒吧|小酌|喝酒|微醺|鸡尾酒/.test(text)) {
       activity_type = "酒吧搭子";
       category_preference = "酒吧";
+      parseSignals.push("activity");
     } else if (/咖啡|学习|安静|拿铁|手冲/.test(text)) {
       activity_type = "咖啡搭子";
       category_preference = "咖啡";
+      parseSignals.push("activity");
     } else if (/夜宵|烧烤|深夜|烤串|炸鸡/.test(text)) {
       activity_type = "夜宵搭子";
       category_preference = /烧烤|烤串/.test(text) ? "烧烤" : "夜宵";
+      parseSignals.push("activity");
     } else if (/火锅/.test(text)) {
       category_preference = "火锅";
+      parseSignals.push("category");
     } else if (/韩餐|韩国|部队锅|豆腐汤|拌饭/.test(text)) {
       category_preference = "韩餐";
+      parseSignals.push("category");
     } else if (/日料|寿司|拉面/.test(text)) {
       category_preference = "日料";
+      parseSignals.push("category");
     }
 
     let social_style = "轻松聊天";
     if (/多人|热闹|组局|认识新朋友/.test(text)) social_style = "多人热闹";
     if (/安静|不想说话|陪伴/.test(text)) social_style = "安静陪伴";
     if (/不尴尬|尴尬|轻松|随便聊|低压力/.test(text)) social_style = "轻松聊天";
+    if (/多人|热闹|组局|认识新朋友|安静|不想说话|陪伴|轻松|低压力/.test(text)) parseSignals.push("style");
 
     let group_size = "1v1";
     if (/多人|几个人|三四|小组|组局|拼/.test(text)) group_size = activity_type === "KTV搭子" ? "多人局" : "小组";
     if (/1v1|一对一|一个人|找一个人|两个人/.test(text)) group_size = "1v1";
+    if (/多人|几个人|三四|小组|组局|拼|1v1|一对一|一个人|找一个人|两个人/.test(text)) parseSignals.push("group");
 
     let target_time = "今晚";
     if (/现在|马上|立刻/.test(text)) target_time = "现在";
     if (/周末|周六|周日/.test(text)) target_time = "周末";
+    if (/现在|马上|立刻|周末|周六|周日|今晚/.test(text)) parseSignals.push("time");
 
     const budget = parseBudget(text, activity_type);
     const distance_tolerance_km = parseDistance(text);
+    if (/预算|人均|以内|不超过|别超过|控制在|[$￥¥]|\d+\s*(元|块|刀|美元|美金)/.test(text)) parseSignals.push("budget");
+    if (/km|公里|步行|分钟|附近|不要太远|近一点/.test(text)) parseSignals.push("distance");
     const interest_labels = [...new Set([category_preference, social_style, activity_type, target_time])];
+    const signalCount = parseSignals.length;
+    const parse_confidence = clamp(0.45 + signalCount * 0.08 + Math.min(text.length, 40) / 200, 0.35, 0.96);
+    const parse_layer = parse_confidence >= 0.7 ? "rule_parsed" : "low_confidence";
     return {
       activity_type,
       category_preference,
@@ -49,7 +65,9 @@
       group_size,
       target_time,
       distance_tolerance_km,
-      interest_labels
+      interest_labels,
+      parse_confidence,
+      parse_layer
     };
   }
 
@@ -100,6 +118,7 @@
       .filter((poi) => activityMatchesPoi(intent.activity_type, poi) || poi.sub_category === intent.category_preference || poi.tags.includes(intent.category_preference))
       .map((poi) => ({ poi, score: calculatePlaceScore(intent, poi) }))
       .sort((a, b) => b.score.total - a.score.total);
+    if (!userCandidates.length || !placeCandidates.length) return [];
 
     return userCandidates.slice(0, 8).map((userItem, index) => {
       const savedPlaces = userItem.user.mock_meituan_behavior?.saved_places || [];

@@ -284,7 +284,12 @@ const mockData = (() => {
     new_suggested_time
   }));
 
-  return { area, scenes, pois, users, backgroundUsers, buddyDemands, matchPlans, chatThreads, deals, replanningEvents };
+  const sparseSupply = {
+    users: users.filter((u) => ["user_042", "user_031", "user_127"].includes(u.user_id)),
+    pois: pois.filter((p) => ["poi_004", "poi_018", "poi_029"].includes(p.poi_id))
+  };
+
+  return { area, scenes, pois, users, backgroundUsers, buddyDemands, matchPlans, chatThreads, deals, replanningEvents, sparseSupply };
 })();
 
 window.mockData = mockData;
