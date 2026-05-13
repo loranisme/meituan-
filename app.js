@@ -1,5 +1,5 @@
 const { pois, users, backgroundUsers, buddyDemands, matchPlans, chatThreads, deals, replanningEvents, scenes, area } = window.mockData;
-const { parseIntent, runMatching, replanMatch } = window.MatchingUtils;
+const { parseIntent, runMatching } = window.MatchingUtils;
 
 const PLAN_STATUS = Object.freeze({
   IDLE: "idle",
@@ -42,6 +42,7 @@ const appState = {
   depositSheetVisible: false,
   depositAgreementChecked: false,
   depositLocked: false,
+  selectedDeal: null,
   fallbackSuggestion: "",
   sparseMode: false,
   debugMeta: null,
@@ -51,7 +52,6 @@ const appState = {
   aiHasRun: false,
   pendingSuccess: false,
   toast: "",
-  selectedTime: "今晚",
   groupChats: [],
   viewingGroupChatId: null
 };
@@ -328,9 +328,9 @@ function renderGaodeMarkers() {
     const isSelected = poi.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id);
     const matchScore = matchScoreMap[poi.poi_id];
     const sizeClass = poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
-    const pinHTML = `<div class="map-pin ${isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}" data-category="${poi.category}">
+    const pinHTML = `<div class="map-pin ${isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}" data-category="${poi.category}" title="${poi.name}：${poi.buddy_demand_count} 人想去">
       <span class="pin-icon">${iconForPoi(poi)}</span>
-      <span class="pin-count">${poi.buddy_demand_count}</span>
+      <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>人</small></span>
       ${isHot ? `<em>热门</em>` : ""}
       ${matchScore ? `<span class="pin-match">${matchScore}%</span>` : ""}
     </div>`;
@@ -373,12 +373,7 @@ function updateFilterTabs() {
   el.innerHTML = `
     <div class="category-chips-row">
       ${scenes.map((scene) =>
-        `<button class="filter-chip ${appState.selectedCategory === scene ? "is-active" : ""}" data-category="${scene}">${scene}<span class="chip-count">${categoryCount[scene]}</span></button>`
-      ).join("")}
-    </div>
-    <div class="time-chips-row">
-      ${["现在", "今晚", "周末"].map((t) =>
-        `<button class="time-chip ${appState.selectedTime === t ? "is-active" : ""}" data-time="${t}">${t}</button>`
+        `<button class="filter-chip ${appState.selectedCategory === scene ? "is-active" : ""}" data-category="${scene}">${scene}<span class="chip-count">${categoryCount[scene]}店</span></button>`
       ).join("")}
     </div>
   `;
@@ -394,30 +389,6 @@ function updateFilterTabs() {
       searchAndRenderPOIs(appState.selectedCategory);
     });
   });
-  el.querySelectorAll(".time-chip").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      appState.selectedTime = btn.dataset.time;
-      updateFilterTabs();
-      showToast(`已切换到「${btn.dataset.time}」搭子`);
-    });
-  });
-}
-
-const DISH_DATA = {
-  "韩餐":   [["石锅拌饭", "¥68", "#fde8c8", "#f97316"], ["豆腐汤", "¥48", "#fef9c3", "#ca8a04"], ["部队锅", "¥78/人", "#fee2e2", "#dc2626"]],
-  "火锅":   [["鸳鸯锅底", "¥58/人", "#fee2e2", "#dc2626"], ["涮肉拼盘", "¥88", "#fde8c8", "#ea580c"], ["饮料畅饮", "免费", "#e0f2fe", "#0284c7"]],
-  "咖啡":   [["手冲咖啡", "¥38", "#fef3c7", "#92400e"], ["拿铁", "¥32", "#fde8c8", "#c2410c"], ["下午茶套", "¥68/2人", "#f3e8ff", "#7c3aed"]],
-  "KTV":    [["小包厢", "¥88/时", "#f3e8ff", "#7c3aed"], ["含畅饮套", "¥128/人", "#e0e7ff", "#4338ca"], ["无限欢唱", "¥199", "#fce7f3", "#be185d"]],
-  "酒吧":   [["招牌特调", "¥58", "#fee2e2", "#b91c1c"], ["精酿啤酒", "¥38", "#fef3c7", "#92400e"], ["双人套餐", "¥188", "#fce7f3", "#be185d"]],
-  "夜宵":   [["烤串拼盘", "¥68", "#1e293b", "#f97316"], ["炸鸡套餐", "¥48", "#fde8c8", "#ea580c"], ["啤酒畅饮", "¥58", "#e0e7ff", "#4338ca"]],
-  "桌游":   [["双人券", "¥68", "#dcfce7", "#15803d"], ["四人套餐", "¥198", "#e0f2fe", "#0369a1"], ["无限时", "¥128/人", "#fce7f3", "#be185d"]],
-  "甜品":   [["招牌甜品", "¥38", "#fce7f3", "#db2777"], ["双拼套", "¥58", "#f3e8ff", "#7c3aed"], ["季节限定", "¥48", "#fef9c3", "#ca8a04"]],
-  "日料":   [["刺身拼盘", "¥98", "#e0f2fe", "#0284c7"], ["拉面套", "¥68", "#fde8c8", "#c2410c"], ["寿司拼", "¥88", "#dcfce7", "#15803d"]],
-};
-
-function poiDishTiles(poi) {
-  return DISH_DATA[poi.sub_category] || DISH_DATA[poi.category] ||
-    [["招牌推荐", `¥${poi.avg_price}`, "#fde8c8", "#f97316"], ["套餐优惠", `¥${Math.round(poi.avg_price * 1.8)}/2人`, "#e0f2fe", "#0284c7"], ["限时特惠", "团购价", "#dcfce7", "#15803d"]];
 }
 
 function poiPhotoGradient(poi) {
@@ -453,25 +424,14 @@ function updatePOISheet() {
   const matchScore = matchScoreMap[poi.poi_id];
   const demands = getFakeDemands(poi);
   const navLink = gaodeNavLink(poi);
-  const tiles = poiDishTiles(poi);
   const { accent } = poiPhotoGradient(poi);
   el.innerHTML = `
     <div class="sheet-grip"></div>
-    <div class="merchant-photo-strip">
-      ${tiles.slice(0, 3).map(([dish, price, bg, accent]) => `
-        <div class="photo-tile" style="background:linear-gradient(160deg,${bg} 0%,${bg}99 100%);border-bottom:3px solid ${accent};">
-          <span class="photo-tile-price" style="color:${accent}">${price}</span>
-          <span class="photo-tile-name">${dish}</span>
-        </div>
-      `).join("")}
-      <div class="merchant-photo-meta">
-        ${matchScore ? `<span class="sheet-match">${matchScore}% 匹配</span>` : ""}
-        <span class="open-badge">${poi.open_status}</span>
-      </div>
-    </div>
     <div class="merchant-detail-body">
       <div class="sheet-title-row">
         <h2 class="merchant-name">${poi.name}</h2>
+        <span class="open-badge">${poi.open_status}</span>
+        ${matchScore ? `<span class="sheet-match">${matchScore}% 匹配</span>` : ""}
       </div>
       <div class="merchant-rating-row">
         <span class="stars" style="color:${accent}">${starHTML(poi.rating)}</span>
@@ -559,7 +519,6 @@ function showMerchantModal(poi) {
   let overlay = document.getElementById("merchantModal");
   if (overlay) overlay.remove();
   const navLink = gaodeNavLink(poi);
-  const tiles = poiDishTiles(poi);
   overlay = document.createElement("div");
   overlay.id = "merchantModal";
   overlay.className = "modal-overlay";
@@ -568,14 +527,6 @@ function showMerchantModal(poi) {
       <div class="modal-header">
         <h2>${poi.name}</h2>
         <button class="modal-close" id="closeModal">✕</button>
-      </div>
-      <div class="modal-photo-row">
-        ${tiles.slice(0, 3).map(([dish, price, bg, accent]) =>
-          `<div class="modal-photo" style="background:linear-gradient(160deg,${bg},${bg}bb);border-bottom:3px solid ${accent};">
-            <span style="color:${accent};font-weight:900;font-size:12px;">${price}</span>
-            <span style="font-size:11px;margin-top:3px;">${dish}</span>
-          </div>`
-        ).join("")}
       </div>
       <div class="modal-info">
         <div class="modal-info-row"><span>评分</span><b>⭐ ${poi.rating} / 5.0</b></div>
@@ -614,9 +565,9 @@ function getFakeDemands(poi) {
   const count = Math.min(poi.buddy_demand_count, 3);
   const seed = parseInt(poi.poi_id.replace(/\D/g, "")) || 1;
   const templates = [
-    { time: appState.selectedTime === "现在" ? "现在 + 15 分钟" : appState.selectedTime === "周末" ? "周末 15:30" : "今晚 18:30", style: "轻松聊天", size: "1v1", note: "聊聊天，别太社交" },
-    { time: appState.selectedTime === "现在" ? "现在 + 30 分钟" : appState.selectedTime === "周末" ? "周末 16:00" : "今晚 19:00", style: "低压力社交", size: "1v1", note: "想试试这家，一起去吗" },
-    { time: appState.selectedTime === "现在" ? "现在 + 45 分钟" : appState.selectedTime === "周末" ? "周末 17:00" : "今晚 20:00", style: "多人热闹", size: "3-5人", note: "找几个人一起，气氛好就行" }
+    { time: "今晚 18:30", style: "轻松聊天", size: "1v1", note: "聊聊天，别太社交" },
+    { time: "今晚 19:00", style: "低压力社交", size: "1v1", note: "想试试这家，一起去吗" },
+    { time: "今晚 20:00", style: "多人热闹", size: "3-5人", note: "找几个人一起，气氛好就行" }
   ];
   return templates.slice(0, count).map((t, i) => {
     const userIndex = (seed * 3 + i * 11) % users.length;
@@ -711,10 +662,7 @@ function renderAIPage() {
   });
   const replanButton = $("#simulateWaitFromResult");
   if (replanButton) replanButton.addEventListener("click", () => {
-    const replanPOIs = gaodePOIs.length ? gaodePOIs : pois;
-    appState.matchResults[0] = replanMatch(appState.matchResults[0], "waiting_time_change", replanPOIs);
-    appState.replanningNotice = appState.matchResults[0].replanning_notice;
-    render();
+    openReplanChooser("waiting_time_change", appState.matchResults[0], { resultIndex: 0 });
   });
   const reshuffleButton = $("#reshuffleResult");
   if (reshuffleButton) reshuffleButton.addEventListener("click", () => {
@@ -855,6 +803,7 @@ function selectMatch(match) {
   appState.depositSheetVisible = false;
   appState.depositAgreementChecked = false;
   appState.depositLocked = false;
+  appState.selectedDeal = null;
   appState.fallbackSuggestion = "";
   appState.debugMeta = appState.selectedMatch.concurrency || appState.debugMeta;
   setPlanStatus(PLAN_STATUS.MATCHED);
@@ -1040,8 +989,8 @@ function renderChatPage() {
     </section>
   `;
   $("#confirmMatch").addEventListener("click", confirmMatch);
-  $("#changePlace").addEventListener("click", () => applyReplan("change_place"));
-  $("#simulateWait").addEventListener("click", () => applyReplan("waiting_time_change"));
+  $("#changePlace").addEventListener("click", () => openReplanChooser("change_place"));
+  $("#simulateWait").addEventListener("click", () => openReplanChooser("waiting_time_change"));
   $("#simulateReject").addEventListener("click", simulateMatchReject);
   $("#safetyOptions").addEventListener("click", () => showToast("已开启行程共享 · 紧急联系人已通知"));
   $("#sendMessage").addEventListener("click", sendChatMessage);
@@ -1056,6 +1005,204 @@ function renderChatPage() {
 function nowTime() {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function localClamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function activityFitsPoi(activity, poi) {
+  if (activity === "KTV搭子") return poi.category === "KTV";
+  if (activity === "酒吧搭子") return poi.category === "酒吧";
+  if (activity === "咖啡搭子") return poi.category === "咖啡";
+  if (activity === "夜宵搭子") return poi.category === "夜宵";
+  return poi.category === "餐厅";
+}
+
+function rankReplanCandidates(match, eventType) {
+  const source = gaodePOIs.length ? gaodePOIs : pois;
+  const currentPoi = match.poi;
+  const intent = match.intent || parseIntent(appState.userInput);
+  const peer = match.user || {};
+  return source
+    .filter((poi) => poi.poi_id !== currentPoi.poi_id)
+    .map((poi) => {
+      const sameSubCategory = poi.sub_category === currentPoi.sub_category || poi.sub_category === intent.category_preference;
+      const sameCategory = poi.category === currentPoi.category || activityFitsPoi(intent.activity_type, poi);
+      const tagOverlap = (poi.tags || []).filter((tag) => [intent.category_preference, intent.social_style, ...(peer.interest_labels || [])].includes(tag)).length;
+      const categoryScore = sameSubCategory ? 100 : sameCategory ? 82 : localClamp(42 + tagOverlap * 14, 35, 76);
+      const priceScore = localClamp(100 - Math.abs((poi.avg_price || 0) - (currentPoi.avg_price || 0)) * 3, 25, 100);
+      const waitScore = localClamp(100 - (poi.wait_time_min || 0) * (eventType === "waiting_time_change" ? 4.5 : 3), 20, 100);
+      const distanceScore = localClamp(100 - Number(poi.distance_km || 0) * 24, 35, 100);
+      const ratingScore = localClamp((Number(poi.rating) || 4) / 5 * 100, 60, 100);
+      const peerScore = (peer.preferred_categories || []).includes(poi.sub_category) || (peer.preferred_categories || []).includes(poi.category)
+        ? 100
+        : localClamp(54 + tagOverlap * 12, 45, 86);
+      const rankScore = Math.round(
+        categoryScore * 0.26 +
+        priceScore * 0.17 +
+        waitScore * 0.22 +
+        distanceScore * 0.13 +
+        ratingScore * 0.10 +
+        peerScore * 0.12
+      );
+      const reasons = [
+        sameSubCategory ? "品类高度相似" : sameCategory ? "场景一致" : "兴趣标签接近",
+        `等待 ${poi.wait_time_min} 分钟`,
+        `人均 ¥${poi.avg_price}`,
+        peerScore >= 90 ? "对方偏好也匹配" : "双方条件可接受"
+      ];
+      return { poi, rankScore, categoryScore, priceScore, waitScore, distanceScore, ratingScore, peerScore, reasons };
+    })
+    .filter((item) => item.rankScore >= 48)
+    .sort((a, b) => b.rankScore - a.rankScore || a.poi.wait_time_min - b.poi.wait_time_min)
+    .slice(0, 5);
+}
+
+function replanModalCopy(eventType, match) {
+  if (eventType === "waiting_time_change") {
+    const nextWait = Math.max((match.poi.wait_time_min || 0) + 22, 35);
+    return {
+      title: "排队变长，先让双方选",
+      brief: `检测到 ${match.poi.name} 等待时间可能升至 ${nextWait} 分钟。AI 先按相似度筛选候选店，你可以换店，也可以继续等原店。`,
+      modeLabel: "低等待优先",
+      nextWait
+    };
+  }
+  return {
+    title: "换地点候选",
+    brief: `AI 根据 ${match.intent.category_preference}、预算、距离、等待时间和对方偏好，筛出更接近当前方案的餐厅。`,
+    modeLabel: "相似餐厅排序",
+    nextWait: match.poi.wait_time_min
+  };
+}
+
+function openReplanChooser(eventType, match = appState.selectedMatch, options = {}) {
+  if (!match) return;
+  const existing = document.getElementById("replanChoiceModal");
+  if (existing) existing.remove();
+  const copy = replanModalCopy(eventType, match);
+  const candidates = rankReplanCandidates(match, eventType);
+  const overlay = document.createElement("div");
+  overlay.id = "replanChoiceModal";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">${copy.modeLabel}</p>
+          <h2>${copy.title}</h2>
+        </div>
+        <button class="modal-close" id="closeReplanModal">✕</button>
+      </div>
+      <div class="replan-body">
+        <div class="replan-context">
+          <b>当前方案：${match.poi.name}</b>
+          <p>${copy.brief}</p>
+          <p class="score-formula">综合分 = 品类相似 26% + 等待友好 22% + 人均相近 17% + 距离 13% + 评分 10% + 对方偏好 12%</p>
+          <div class="candidate-metrics">
+            <span>当前等待 ${match.poi.wait_time_min}min</span>
+            <span>人均 ¥${match.poi.avg_price}</span>
+            <span>${match.intent.social_style}</span>
+          </div>
+        </div>
+        <div class="replan-candidate-list">
+          ${candidates.map((item, index) => `
+            <article class="replan-candidate">
+              <div class="candidate-head">
+                <span class="rank-badge">#${index + 1}</span>
+                <div>
+	                  <b>${item.poi.name}</b>
+	                  <p>${item.poi.sub_category} · ${item.poi.distance_km}km · ${item.poi.rating}分</p>
+	                </div>
+	                <strong><span>综合</span>${item.rankScore}<small>分</small></strong>
+	              </div>
+	              <div class="candidate-metrics">
+	                <span>品类相似 ${item.categoryScore}</span>
+	                <span>等待友好 ${item.waitScore}</span>
+	                <span>人均相近 ${item.priceScore}</span>
+	                <span>对方偏好 ${item.peerScore}</span>
+	              </div>
+              <p class="candidate-reason">${item.reasons.join(" · ")}</p>
+              <button class="primary-button wide" data-choose-replan="${index}">选择并发给对方确认</button>
+            </article>
+          `).join("") || `<p class="empty">当前没有足够接近的候选店，可以继续保留原方案。</p>`}
+        </div>
+        ${eventType === "waiting_time_change" ? `
+          <div class="wait-choice-row">
+            <button class="secondary-button wide" id="keepWaitingBtn">继续等原店</button>
+          </div>
+        ` : ""}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("closeReplanModal").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  overlay.querySelectorAll("[data-choose-replan]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = candidates[Number(button.dataset.chooseReplan)];
+      if (!item) return;
+      overlay.remove();
+      commitReplanChoice(match, item, eventType, options);
+    });
+  });
+  const keepWaitingBtn = document.getElementById("keepWaitingBtn");
+  if (keepWaitingBtn) {
+    keepWaitingBtn.addEventListener("click", () => {
+      overlay.remove();
+      keepOriginalPlanAfterWait(match, copy.nextWait, options);
+    });
+  }
+}
+
+function commitReplanChoice(match, item, eventType, options = {}) {
+  const nextMatch = {
+    ...match,
+    poi: item.poi,
+    backup_poi: findDealBackup(item.poi),
+    suggested_time: eventType === "waiting_time_change" ? match.suggested_time : match.suggested_time,
+    replanning_notice: `AI 相似度排序 #${options.resultIndex !== undefined ? "A" : "1"}：已选择 ${item.poi.name}（${item.rankScore}分）。${item.reasons.join("，")}。`
+  };
+  if (options.resultIndex !== undefined) {
+    appState.matchResults[options.resultIndex] = nextMatch;
+    appState.replanningNotice = nextMatch.replanning_notice;
+    render();
+    return;
+  }
+  appState.selectedMatch = nextMatch;
+  appState.depositLocked = false;
+  appState.depositAgreementChecked = false;
+  appState.fallbackSuggestion = "";
+  appState.replanningNotice = nextMatch.replanning_notice;
+  setPlanStatus(PLAN_STATUS.NEGOTIATING);
+  appState.chatThread.messages.push({ sender: "user_current", text: `我想换到 ${item.poi.name}，发给你确认一下。`, timestamp: nowTime() });
+  appState.chatThread.messages.push({ sender: "ai", text: nextMatch.replanning_notice, timestamp: nowTime() });
+  appState.chatThread.messages.push({ sender: "matched_user", text: "这个候选我也可以，价格和距离都还行。", timestamp: nowTime() });
+  render();
+}
+
+function keepOriginalPlanAfterWait(match, nextWait, options = {}) {
+  const updatedPoi = { ...match.poi, wait_time_min: nextWait };
+  const nextMatch = {
+    ...match,
+    poi: updatedPoi,
+    replanning_notice: `已保留 ${match.poi.name}，预计等待 ${nextWait} 分钟。AI 未替你换店，只记录双方选择继续等待。`
+  };
+  if (options.resultIndex !== undefined) {
+    appState.matchResults[options.resultIndex] = nextMatch;
+    appState.replanningNotice = nextMatch.replanning_notice;
+    render();
+    return;
+  }
+  appState.selectedMatch = nextMatch;
+  appState.depositLocked = false;
+  appState.depositAgreementChecked = false;
+  appState.replanningNotice = nextMatch.replanning_notice;
+  setPlanStatus(PLAN_STATUS.NEGOTIATING);
+  appState.chatThread.messages.push({ sender: "user_current", text: `我们先继续等 ${match.poi.name}。`, timestamp: nowTime() });
+  appState.chatThread.messages.push({ sender: "ai", text: nextMatch.replanning_notice, timestamp: nowTime() });
+  render();
 }
 
 function buildGroupChat(match) {
@@ -1113,15 +1260,7 @@ function confirmMatch() {
 }
 
 function applyReplan(eventType) {
-  const replanPOIs = gaodePOIs.length ? gaodePOIs : pois;
-  appState.selectedMatch = replanMatch(appState.selectedMatch, eventType, replanPOIs);
-  appState.depositLocked = false;
-  appState.depositAgreementChecked = false;
-  appState.fallbackSuggestion = "";
-  setPlanStatus(PLAN_STATUS.NEGOTIATING);
-  appState.replanningNotice = appState.selectedMatch.replanning_notice;
-  appState.chatThread.messages.push({ sender: "ai", text: appState.replanningNotice, timestamp: "18:12" });
-  render();
+  openReplanChooser(eventType);
 }
 
 function simulateMatchReject() {
@@ -1176,7 +1315,11 @@ function handleQuickReply(text) {
 
 function renderSuccessPage() {
   if (!appState.selectedMatch) return;
-  const deal = getDeal(appState.selectedMatch.poi.poi_id);
+  const deal = appState.selectedDeal || getDeal(appState.selectedMatch.poi.poi_id);
+  const dealRank = rankDealCandidates(appState.selectedMatch)[0];
+  const selectedDealText = appState.selectedDeal
+    ? `双方已选择：${appState.selectedDeal.title}`
+    : `待选择，AI 当前推荐：${dealRank ? dealRank.deal.title : deal.title}`;
   $("#successPage").innerHTML = `
     <section class="success-card card">
       <div class="success-mark">✓</div>
@@ -1193,12 +1336,13 @@ function renderSuccessPage() {
         诚意金状态：${appState.depositLocked ? "已锁定（满足成局前置条件）" : "已解锁（发生改约/拒绝后释放）"}
       </p>
       <div class="deal-box">
-        <b>${deal.title}</b>
-        <p>${deal.deal_type} · 原价 ¥${deal.original_price} · 优惠价 ¥${deal.discount_price}</p>
+        <b>${selectedDealText}</b>
+        <p>${deal.deal_type} · 原价 ¥${deal.original_price} · 优惠价 ¥${deal.discount_price} · 省 ¥${Math.max(0, deal.original_price - deal.discount_price)}</p>
         <p>适合 ${deal.suitable_group_size} · ${deal.valid_time}</p>
       </div>
       <button class="primary-button wide" id="enterGroupChat">💬 进入群聊</button>
-      <button class="primary-button wide" id="buyDeal">购买团购券</button>
+      <button class="primary-button wide" id="chooseDeal">AI 排序选择团购券</button>
+      <button class="primary-button wide" id="buyDeal">${appState.selectedDeal ? "购买已选团购券" : "先选择团购券"}</button>
       <div class="success-secondary-row">
         <button class="secondary-button" id="viewRoute">导航出发</button>
         <button class="secondary-button" id="addCalendar">加入日历</button>
@@ -1215,7 +1359,14 @@ function renderSuccessPage() {
     }
     setPage("chat");
   });
-  $("#buyDeal").addEventListener("click", () => showToast("模拟购买成功 🎫"));
+  $("#chooseDeal").addEventListener("click", () => openDealRankChooser());
+  $("#buyDeal").addEventListener("click", () => {
+    if (!appState.selectedDeal) {
+      openDealRankChooser();
+      return;
+    }
+    showToast(`模拟购买成功：${appState.selectedDeal.title}`);
+  });
   $("#viewRoute").addEventListener("click", () => {
     const poi = appState.selectedMatch.poi;
     const link = gaodeNavLink(poi);
@@ -1255,6 +1406,183 @@ function getDeal(poiId) {
     valid_time: "本日可用",
     conversion_cta: "购买团购券"
   };
+}
+
+function targetGroupCount(groupSize) {
+  if (/多人|小组|3|4|5/.test(String(groupSize))) return 4;
+  return 2;
+}
+
+function groupFitScore(deal, groupCount) {
+  const text = String(deal.suitable_group_size || "");
+  if (groupCount >= 3 && /3|4|多人/.test(text)) return 100;
+  if (groupCount <= 2 && /2|双人|1-2/.test(text)) return 100;
+  if (/本日|通用|不限/.test(text)) return 82;
+  return groupCount >= 3 ? 58 : 68;
+}
+
+function buildDealCandidates(match) {
+  const poi = match.poi;
+  const base = getDeal(poi.poi_id);
+  const avg = Number(poi.avg_price) || 80;
+  const category = poi.category || "餐厅";
+  const variants = [
+    base,
+    {
+      ...base,
+      deal_id: `${base.deal_id}_pair`,
+      deal_type: "双人套餐",
+      title: `${poi.name} 双人到店套餐`,
+      original_price: Math.round(avg * 2.4),
+      discount_price: Math.round(avg * 1.75),
+      suitable_group_size: "2人",
+      valid_time: "本日可用",
+      conversion_cta: "购买双人券"
+    },
+    {
+      ...base,
+      deal_id: `${base.deal_id}_value`,
+      deal_type: "低价券",
+      title: `${poi.name} 低门槛团购券`,
+      original_price: Math.round(avg * 1.35),
+      discount_price: Math.round(avg * 0.95),
+      suitable_group_size: "1-2人",
+      valid_time: "本周可用",
+      conversion_cta: "购买低价券"
+    },
+    {
+      ...base,
+      deal_id: `${base.deal_id}_group`,
+      deal_type: category === "KTV" ? "欢唱多人套餐" : "多人套餐",
+      title: `${poi.name} ${category === "KTV" ? "欢唱" : "多人"}成局套餐`,
+      original_price: Math.round(avg * 4.2),
+      discount_price: Math.round(avg * 3.15),
+      suitable_group_size: "3-4人",
+      valid_time: "本日可用",
+      conversion_cta: category === "KTV" ? "购买欢唱券" : "购买多人券"
+    }
+  ];
+  const seen = new Set();
+  return variants.filter((deal) => {
+    if (seen.has(deal.deal_id)) return false;
+    seen.add(deal.deal_id);
+    return true;
+  });
+}
+
+function rankDealCandidates(match) {
+  const groupCount = targetGroupCount(match.intent.group_size);
+  const budgetMax = Number(match.intent.budget_max) || Number(match.poi.avg_price) || 80;
+  const peerPreference = String(match.user.mock_meituan_behavior?.deal_preference || "");
+  return buildDealCandidates(match).map((deal) => {
+    const saved = Math.max(0, deal.original_price - deal.discount_price);
+    const discountRate = deal.original_price ? saved / deal.original_price : 0;
+    const perPerson = Math.round(deal.discount_price / Math.max(1, groupCount));
+    const groupScore = groupFitScore(deal, groupCount);
+    const saveScore = localClamp(Math.round(discountRate * 240), 35, 100);
+    const budgetScore = perPerson <= budgetMax ? 100 : localClamp(100 - (perPerson - budgetMax) * 3, 20, 88);
+    const timeScore = /本日|今晚/.test(deal.valid_time) ? 100 : 78;
+    const poiScore = deal.poi_id === match.poi.poi_id ? 100 : 70;
+    const preferenceScore = /低价/.test(peerPreference) && /低价|双人/.test(deal.deal_type)
+      ? 100
+      : /套餐|团购/.test(peerPreference) && /套餐|团购/.test(deal.deal_type)
+        ? 94
+        : 78;
+    const rankScore = Math.round(
+      groupScore * 0.25 +
+      saveScore * 0.25 +
+      budgetScore * 0.20 +
+      timeScore * 0.12 +
+      preferenceScore * 0.10 +
+      poiScore * 0.08
+    );
+    return {
+      deal,
+      rankScore,
+      groupScore,
+      saveScore,
+      budgetScore,
+      timeScore,
+      preferenceScore,
+      poiScore,
+      saved,
+      perPerson,
+      reasons: [
+        `适合 ${deal.suitable_group_size}`,
+        `预计人均 ¥${perPerson}`,
+        `立省 ¥${saved}`,
+        preferenceScore >= 90 ? "命中对方券偏好" : "双方可接受"
+      ]
+    };
+  }).sort((a, b) => b.rankScore - a.rankScore || b.saved - a.saved);
+}
+
+function openDealRankChooser() {
+  if (!appState.selectedMatch) return;
+  const existing = document.getElementById("dealRankModal");
+  if (existing) existing.remove();
+  const ranked = rankDealCandidates(appState.selectedMatch);
+  const overlay = document.createElement("div");
+  overlay.id = "dealRankModal";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">团购券 AI Rank</p>
+          <h2>锁定后选择团购券</h2>
+        </div>
+        <button class="modal-close" id="closeDealRankModal">✕</button>
+      </div>
+      <div class="replan-body">
+        <div class="replan-context">
+          <b>${appState.selectedMatch.poi.name} · ${appState.selectedMatch.intent.group_size}</b>
+          <p>成局锁定后，AI 按双方人数、预算、节省金额、有效期和对方券偏好排序，先让双方选券，再进入购买。</p>
+          <p class="score-formula">综合分 = 人数适配 25% + 节省力度 25% + 人均预算 20% + 有效时间 12% + 对方偏好 10% + 地点匹配 8%</p>
+        </div>
+        <div class="replan-candidate-list">
+          ${ranked.map((item, index) => `
+            <article class="replan-candidate deal-rank-card ${appState.selectedDeal && appState.selectedDeal.deal_id === item.deal.deal_id ? "is-selected" : ""}">
+              <div class="candidate-head">
+                <span class="rank-badge">#${index + 1}</span>
+                <div>
+                  <b>${item.deal.title}</b>
+                  <p>${item.deal.deal_type} · ${item.deal.valid_time} · ${item.deal.suitable_group_size}</p>
+                </div>
+                <strong><span>综合</span>${item.rankScore}<small>分</small></strong>
+              </div>
+              <div class="candidate-metrics">
+                <span>人数 ${item.groupScore}</span>
+                <span>节省 ${item.saveScore}</span>
+                <span>预算 ${item.budgetScore}</span>
+                <span>偏好 ${item.preferenceScore}</span>
+              </div>
+              <p class="candidate-reason">原价 ¥${item.deal.original_price} · 券后 ¥${item.deal.discount_price} · 省 ¥${item.saved} · ${item.reasons.join(" · ")}</p>
+              <button class="primary-button wide" data-choose-deal="${index}">${appState.selectedDeal && appState.selectedDeal.deal_id === item.deal.deal_id ? "已选这张券" : "选择并发给对方确认"}</button>
+            </article>
+          `).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById("closeDealRankModal").addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
+  overlay.querySelectorAll("[data-choose-deal]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = ranked[Number(button.dataset.chooseDeal)];
+      if (!item) return;
+      appState.selectedDeal = item.deal;
+      if (appState.chatThread) {
+        appState.chatThread.messages.push({ sender: "user_current", text: `我选 ${item.deal.title}，券后 ¥${item.deal.discount_price}。`, timestamp: nowTime() });
+        appState.chatThread.messages.push({ sender: "ai", text: `团购券 Rank #${ranked.indexOf(item) + 1}：综合 ${item.rankScore} 分。${item.reasons.join("，")}。`, timestamp: nowTime() });
+        appState.chatThread.messages.push({ sender: "matched_user", text: "这张可以，人数和价格都合适。", timestamp: nowTime() });
+      }
+      overlay.remove();
+      showToast("已发送团购券给对方确认");
+      render();
+    });
+  });
 }
 
 function findDealBackup(poi) {

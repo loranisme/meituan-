@@ -143,8 +143,7 @@
         .filter-chip.is-active {
           @apply bg-gray-900 text-white;
         }
-        .filter-chip:active,
-        .time-chip:active {
+        .filter-chip:active {
           transform: scale(0.92);
         }
         .action-grid {
@@ -157,18 +156,9 @@
           @apply bg-white/25;
         }
 
-        /* ---------- Category / time chips ---------- */
+        /* ---------- Category chips ---------- */
         .category-chips-row {
           @apply flex gap-2 overflow-x-auto pb-1.5;
-        }
-        .time-chips-row {
-          @apply flex gap-1.5 pt-1.5 pb-1;
-        }
-        .time-chip {
-          @apply bg-white border border-line rounded-full px-3.5 py-1 text-xs font-extrabold whitespace-nowrap text-muted cursor-pointer transition-colors;
-        }
-        .time-chip.is-active {
-          @apply bg-blue-500 border-blue-500 text-white;
         }
 
         /* ---------- Tag pills ---------- */
@@ -511,28 +501,6 @@
           @apply opacity-90;
         }
 
-        /* ---------- Merchant photo strip ---------- */
-        .merchant-photo-strip {
-          @apply h-[100px] rounded-t-xl grid grid-cols-3 gap-px relative overflow-hidden;
-          margin: -14px -14px 0;
-        }
-        .photo-tile {
-          @apply flex flex-col items-center justify-center gap-0.5;
-          padding: 8px 4px;
-          cursor: default;
-        }
-        .photo-tile-price {
-          @apply text-[13px] font-extrabold leading-none;
-        }
-        .photo-tile-name {
-          @apply text-[11px] text-gray-700 font-bold text-center;
-          line-height: 1.2;
-        }
-        .merchant-photo-meta {
-          @apply absolute flex gap-1.5 items-center;
-          top: 10px;
-          right: 10px;
-        }
         .open-badge {
           @apply bg-green-100 text-green-800 rounded-full text-[11px] font-extrabold;
           padding: 3px 9px;
@@ -554,13 +522,6 @@
         .modal-close {
           @apply w-8 h-8 rounded-full bg-gray-100 text-gray-700 text-sm;
         }
-        .modal-photo-row {
-          @apply grid grid-cols-3 gap-px h-24;
-        }
-        .modal-photo {
-          @apply flex flex-col items-center justify-center gap-0.5;
-          padding: 6px;
-        }
         .modal-info {
           @apply mt-1;
           padding: 0 18px;
@@ -578,6 +539,63 @@
         .modal-actions {
           @apply grid grid-cols-2 gap-2.5;
           padding: 14px 18px 0;
+        }
+        .replan-body {
+          @apply grid gap-3;
+          padding: 14px 18px 0;
+        }
+        .replan-context {
+          @apply bg-slate-50 border border-slate-200 rounded-xl;
+          padding: 12px;
+        }
+        .replan-context p,
+        .candidate-reason {
+          @apply text-xs text-muted leading-relaxed mt-1.5;
+        }
+        .score-formula {
+          @apply bg-white border border-slate-200 rounded-lg text-slate-700 font-bold;
+          padding: 7px 9px;
+        }
+        .replan-candidate-list {
+          @apply grid gap-2.5;
+        }
+        .replan-candidate {
+          @apply border border-line rounded-xl bg-white;
+          padding: 12px;
+        }
+        .replan-candidate.is-selected {
+          @apply border-gray-900;
+          box-shadow: inset 0 0 0 1px #111827;
+        }
+        .candidate-head {
+          @apply grid items-start gap-2;
+          grid-template-columns: 34px 1fr auto;
+        }
+        .candidate-head p {
+          @apply text-xs text-muted mt-0.5;
+        }
+        .candidate-head strong {
+          @apply text-lg text-right leading-none;
+        }
+        .candidate-head strong span,
+        .candidate-head strong small {
+          @apply block text-[10px] text-muted font-extrabold leading-none;
+        }
+        .rank-badge {
+          @apply w-7 h-7 rounded-full grid place-items-center bg-gray-900 text-white text-xs font-extrabold;
+        }
+        .candidate-metrics {
+          @apply flex gap-1.5 flex-wrap mt-2;
+        }
+        .candidate-metrics span {
+          @apply bg-gray-100 text-gray-700 rounded-full text-[11px] font-extrabold;
+          padding: 4px 7px;
+        }
+        .replan-candidate .primary-button {
+          @apply mt-2.5 min-h-[40px] text-sm;
+        }
+        .wait-choice-row {
+          @apply border-t border-line pt-3;
         }
 
         /* ---------- Group chat ---------- */

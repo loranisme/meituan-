@@ -65,7 +65,15 @@
   padding: 3px;
 }
 .pin-icon  { font-size: 17px; line-height: 1; }
-.pin-count { font-size: 13px; font-weight: 900; line-height: 1; }
+.pin-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font-weight: 900;
+  line-height: 1;
+}
+.pin-count b { font-size: 13px; }
+.pin-count small { font-size: 8px; }
 .map-pin em {
   position: absolute;
   top: -12px;
