@@ -47,6 +47,8 @@ const appState = {
   sparseMode: false,
   debugMeta: null,
   replanningNotice: "",
+  aiDirector: null,
+  aiAgentError: "",
   aiLoading: false,
   aiStep: -1,
   aiHasRun: false,
@@ -60,16 +62,21 @@ window.appState = appState;
 
 let gaodeMap = null;
 let gaodeMarkers = [];
+let gaodeFitMarkers = [];
 let gaodePOIs = [];
 
-const AMAP_TYPE_MAP = {
-  "全部": "餐饮服务",
-  "饭搭子": "餐饮服务",
-  "KTV搭子": "KTV",
-  "酒吧搭子": "酒吧",
-  "咖啡搭子": "咖啡厅|奶茶店",
-  "夜宵搭子": "烧烤|夜宵"
-};
+const BUSINESS_DISTRICT_MAP = Object.freeze({
+  center: [116.4558, 39.937],
+  bounds: {
+    west: 116.4448,
+    east: 116.4668,
+    south: 39.929,
+    north: 39.945
+  },
+  fitPadding: [46, 40, 120, 40],
+  maxZoom: 16,
+  fallbackZoom: 15
+});
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -178,6 +185,7 @@ function renderMapPage() {
     const mapPageEl = document.getElementById("mapPage");
     if (mapPageEl && mapPageEl.classList.contains("is-active")) {
       gaodeMap.resize();
+      lockBusinessDistrictViewport();
     }
   }
   updateMapStats();
@@ -193,19 +201,30 @@ function renderMapPage() {
 function loadAmapSDK() {
   if (typeof AMap !== "undefined") { initAMap(); return; }
   const script = document.createElement("script");
-  script.src = "https://webapi.amap.com/maps?v=1.4.15&key=20cade8c838f519cf6b734b7e4ab762d&plugin=AMap.PlaceSearch,AMap.Scale";
+  script.src = "https://webapi.amap.com/maps?v=1.4.15&key=20cade8c838f519cf6b734b7e4ab762d&plugin=AMap.Scale";
   script.onload = initAMap;
   script.onerror = () => showToast("地图加载失败，请在 app.js 中填入真实的高德 API Key");
   document.head.appendChild(script);
 }
 
 function mockPoiLngLat(poi) {
+  const { bounds } = BUSINESS_DISTRICT_MAP;
+  const rawX = Number.isFinite(Number(poi.x)) ? Number(poi.x) : 50;
+  const rawY = Number.isFinite(Number(poi.y)) ? Number(poi.y) : 50;
+  const x = Math.max(0, Math.min(100, rawX)) / 100;
+  const y = Math.max(0, Math.min(100, rawY)) / 100;
+  if (Number.isFinite(Number(poi.x)) && Number.isFinite(Number(poi.y))) {
+    return [
+      parseFloat((bounds.west + (bounds.east - bounds.west) * x).toFixed(6)),
+      parseFloat((bounds.north - (bounds.north - bounds.south) * y).toFixed(6))
+    ];
+  }
   const num = parseInt(poi.poi_id.replace(/\D/g, "")) || 1;
   const angle = num * 2.399;
   const d = Number(poi.distance_km) || 0.8;
   return [
-    parseFloat((116.4551 + d * 0.0118 * Math.cos(angle)).toFixed(5)),
-    parseFloat((39.9042 + d * 0.009 * Math.sin(angle)).toFixed(5))
+    parseFloat((BUSINESS_DISTRICT_MAP.center[0] + d * 0.005 * Math.cos(angle)).toFixed(6)),
+    parseFloat((BUSINESS_DISTRICT_MAP.center[1] + d * 0.004 * Math.sin(angle)).toFixed(6))
   ];
 }
 
@@ -219,102 +238,74 @@ function filteredMockPois(category) {
   return getMockPoisWithCoords().filter((p) => category === "全部" || categoryToActivity(p) === category);
 }
 
+function setMapLockedStatus() {
+  if (!gaodeMap || typeof gaodeMap.setStatus !== "function") return;
+  gaodeMap.setStatus({
+    dragEnable: false,
+    zoomEnable: false,
+    doubleClickZoom: false,
+    keyboardEnable: false,
+    jogEnable: false,
+    scrollWheel: false,
+    touchZoom: false
+  });
+}
+
+function ensureDistrictFitMarkers() {
+  if (!gaodeMap || typeof AMap === "undefined") return [];
+  if (!gaodeFitMarkers.length) {
+    gaodeFitMarkers = getMockPoisWithCoords().map((poi) => {
+      const marker = new AMap.Marker({
+        position: new AMap.LngLat(poi.location[0], poi.location[1]),
+        content: '<span class="map-fit-anchor" aria-hidden="true"></span>',
+        zIndex: -1
+      });
+      marker.setMap(gaodeMap);
+      return marker;
+    });
+  }
+  return gaodeFitMarkers;
+}
+
+function lockBusinessDistrictViewport() {
+  if (!gaodeMap || typeof AMap === "undefined") return;
+  const fitMarkers = ensureDistrictFitMarkers();
+  if (fitMarkers.length && typeof gaodeMap.setFitView === "function") {
+    gaodeMap.setFitView(fitMarkers, true, BUSINESS_DISTRICT_MAP.fitPadding, BUSINESS_DISTRICT_MAP.maxZoom);
+  } else if (typeof gaodeMap.setZoomAndCenter === "function") {
+    gaodeMap.setZoomAndCenter(BUSINESS_DISTRICT_MAP.fallbackZoom, BUSINESS_DISTRICT_MAP.center);
+  }
+  setMapLockedStatus();
+}
+
 function initAMap() {
   gaodeMap = new AMap.Map("amapContainer", {
-    zoom: 17,
-    center: [116.4551, 39.9042],
+    zoom: BUSINESS_DISTRICT_MAP.fallbackZoom,
+    center: BUSINESS_DISTRICT_MAP.center,
     mapStyle: "amap://styles/normal",
-    resizeEnable: true
+    resizeEnable: true,
+    animateEnable: false,
+    dragEnable: false,
+    zoomEnable: false,
+    doubleClickZoom: false,
+    keyboardEnable: false,
+    jogEnable: false,
+    scrollWheel: false,
+    touchZoom: false
   });
   gaodeMap.addControl(new AMap.Scale());
   const userMarker = new AMap.Marker({
-    position: new AMap.LngLat(116.4551, 39.9042),
+    position: new AMap.LngLat(BUSINESS_DISTRICT_MAP.center[0], BUSINESS_DISTRICT_MAP.center[1]),
     content: '<div class="user-location-pin" title="你在这里"></div>',
     zIndex: 200
   });
   userMarker.setMap(gaodeMap);
-  // Immediately show mock POIs so the map isn't empty while PlaceSearch loads
   gaodePOIs = filteredMockPois(appState.selectedCategory);
   appState.selectedPOI = gaodePOIs[0];
   renderGaodeMarkers();
+  lockBusinessDistrictViewport();
   updateMapStats();
   updatePOISheet();
-  // Try to load real Gaode POIs; replace mock ones if successful
-  searchAndRenderPOIs(appState.selectedCategory);
-}
-
-function searchAndRenderPOIs(category) {
-  if (!gaodeMap || typeof AMap === "undefined") return;
-  const type = AMAP_TYPE_MAP[category] || "餐饮服务";
-  const center = gaodeMap.getCenter();
-  const placeSearch = new AMap.PlaceSearch({ type, pageSize: 15, city: "北京", citylimit: true });
-  placeSearch.searchNearBy("", [center.getLng(), center.getLat()], 1200, (status, result) => {
-    if (status === "complete" && result.poiList && result.poiList.pois && result.poiList.pois.length) {
-      gaodePOIs = result.poiList.pois.map((p, i) => enrichGaodePOI(p, category, i));
-      if (!gaodePOIs.find((p) => p.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id))) {
-        appState.selectedPOI = gaodePOIs[0];
-      }
-      renderGaodeMarkers();
-      updateMapStats();
-      updatePOISheet();
-    } else {
-      // PlaceSearch not authorized — mock data already displayed, no toast needed
-    }
-  });
-}
-
-function enrichGaodePOI(gp, category) {
-  const budgets = { "KTV搭子": 80, "酒吧搭子": 100, "咖啡搭子": 35, "夜宵搭子": 60, "饭搭子": 80, "全部": 80 };
-  const price = parseInt(gp.biz_ext && gp.biz_ext.cost) || budgets[category] || 80;
-  const rating = parseFloat(gp.biz_ext && gp.biz_ext.rating) || parseFloat((4.0 + Math.random() * 0.9).toFixed(1));
-  const buddyCount = Math.floor(Math.random() * 8) + 1;
-  const hotScore = rating > 4.6 ? Math.floor(Math.random() * 15) + 85 : Math.floor(Math.random() * 30) + 60;
-  const cat = gaodeCategoryToApp(gp.type, category);
-  return {
-    poi_id: gp.id,
-    name: gp.name,
-    category: cat,
-    sub_category: (gp.type || "").split(";")[0] || "餐饮",
-    address: typeof gp.address === "string" ? gp.address : "",
-    location: [gp.location.getLng(), gp.location.getLat()],
-    avg_price: price,
-    rating: Math.round(rating * 10) / 10,
-    wait_time_min: Math.floor(Math.random() * 20),
-    open_status: "营业中",
-    tel: typeof gp.tel === "string" ? gp.tel : "",
-    tags: generateTagsFromType(gp.type, category),
-    deal_text: "到店享优惠",
-    buddy_demand_count: buddyCount,
-    hot_score: hotScore,
-    deal_available: true,
-    distance_km: gp.distance ? (gp.distance / 1000).toFixed(1) : (Math.random() * 1.5 + 0.3).toFixed(1)
-  };
-}
-
-function gaodeCategoryToApp(type, fallback) {
-  if (!type) return categoryFromScene(fallback);
-  if (type.includes("KTV") || type.includes("歌舞")) return "KTV";
-  if (type.includes("酒吧") || type.includes("酒廊") || type.toLowerCase().includes("bar")) return "酒吧";
-  if (type.includes("咖啡") || type.includes("奶茶") || type.includes("茶饮")) return "咖啡";
-  if (type.includes("烧烤") || type.includes("夜宵") || type.includes("炸串")) return "夜宵";
-  if (type.includes("桌游") || type.includes("密室")) return "桌游";
-  return "餐厅";
-}
-
-function categoryFromScene(scene) {
-  return { "KTV搭子": "KTV", "酒吧搭子": "酒吧", "咖啡搭子": "咖啡", "夜宵搭子": "夜宵" }[scene] || "餐厅";
-}
-
-function generateTagsFromType(_type, category) {
-  const base = {
-    "KTV搭子": ["KTV", "唱歌", "多人热闹", "学生"],
-    "酒吧搭子": ["小酌", "认识新朋友", "轻松聊天", "下班后"],
-    "咖啡搭子": ["咖啡", "学习", "安静陪伴", "轻社交"],
-    "夜宵搭子": ["夜宵", "烧烤", "深夜", "小组"],
-    "饭搭子": ["聊天", "轻松", "1v1", "探店"],
-    "全部": ["聊天", "探店", "轻松"]
-  };
-  return (base[category] || base["全部"]).slice();
 }
 
 function renderGaodeMarkers() {
@@ -343,7 +334,7 @@ function renderGaodeMarkers() {
       appState.selectedPOI = poi;
       renderGaodeMarkers();
       updatePOISheet();
-      gaodeMap.panTo(poi.location);
+      lockBusinessDistrictViewport();
       const sheet = document.getElementById("poiSheet");
       if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
@@ -384,9 +375,9 @@ function updateFilterTabs() {
       appState.selectedPOI = gaodePOIs[0] || null;
       updateFilterTabs();
       renderGaodeMarkers();
+      lockBusinessDistrictViewport();
       updateMapStats();
       if (appState.selectedPOI) updatePOISheet();
-      searchAndRenderPOIs(appState.selectedCategory);
     });
   });
 }
@@ -593,6 +584,8 @@ async function runAI() {
   appState.parsedIntent = null;
   appState.matchResults = [];
   appState.replanningNotice = "";
+  appState.aiDirector = null;
+  appState.aiAgentError = "";
   for (let step = 0; step < 3; step += 1) {
     appState.aiStep = step;
     render();
@@ -612,9 +605,104 @@ async function runAI() {
   }
   appState.generatedPlan = appState.matchResults[0] || null;
   appState.debugMeta = appState.generatedPlan ? appState.generatedPlan.concurrency : null;
+  await enrichWithAIDirector(availablePOIs);
   appState.aiLoading = false;
   appState.aiStep = -1;
   render();
+}
+
+function buildAIDirectorPayload(availablePOIs) {
+  return {
+    area,
+    user_input: appState.userInput,
+    parsed_intent: appState.parsedIntent,
+    sparse_mode: appState.sparseMode,
+    merchant_candidates: availablePOIs.slice(0, 12).map((poi) => ({
+      poi_id: poi.poi_id,
+      name: poi.name,
+      category: poi.category,
+      sub_category: poi.sub_category,
+      avg_price: poi.avg_price,
+      rating: poi.rating,
+      wait_time_min: poi.wait_time_min,
+      buddy_demand_count: poi.buddy_demand_count,
+      hot_score: poi.hot_score,
+      distance_km: poi.distance_km,
+      tags: poi.tags,
+      deal_text: poi.deal_text
+    })),
+    local_plans: appState.matchResults.slice(0, 3).map((match, index) => ({
+      plan_index: index,
+      match_id: match.match_id,
+      total_score: match.total_score,
+      suggested_time: match.suggested_time,
+      user: {
+        user_id: match.user.user_id,
+        nickname: match.user.nickname,
+        social_style: match.user.social_style,
+        budget_min: match.user.budget_min,
+        budget_max: match.user.budget_max,
+        distance_km: match.user.distance_km,
+        interest_labels: match.user.interest_labels
+      },
+      poi: {
+        poi_id: match.poi.poi_id,
+        name: match.poi.name,
+        category: match.poi.category,
+        sub_category: match.poi.sub_category,
+        avg_price: match.poi.avg_price,
+        rating: match.poi.rating,
+        wait_time_min: match.poi.wait_time_min,
+        deal_text: match.poi.deal_text
+      },
+      backup_poi: match.backup_poi ? {
+        poi_id: match.backup_poi.poi_id,
+        name: match.backup_poi.name,
+        wait_time_min: match.backup_poi.wait_time_min
+      } : null,
+      local_explanation: match.explanation,
+      score_breakdown: match.score_breakdown
+    }))
+  };
+}
+
+async function requestAIDirector(payload) {
+  const response = await fetch("/api/ai-match", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.fallback) {
+    throw new Error(data.error || `AI agent failed with ${response.status}`);
+  }
+  return data;
+}
+
+async function enrichWithAIDirector(availablePOIs) {
+  if (!appState.matchResults.length) return;
+  try {
+    const director = await requestAIDirector(buildAIDirectorPayload(availablePOIs));
+    appState.aiDirector = director;
+    if (director.intent_patch) {
+      appState.parsedIntent = { ...appState.parsedIntent, ...director.intent_patch, parse_layer: "gemini_agent", parse_confidence: director.intent_patch.confidence };
+      appState.matchResults = appState.matchResults.map((match) => ({ ...match, intent: appState.parsedIntent }));
+    }
+    const overrides = Array.isArray(director.plan_overrides) ? director.plan_overrides : [];
+    appState.matchResults = appState.matchResults.map((match, index) => {
+      const override = overrides.find((item) => item.plan_index === index || item.match_id === match.match_id);
+      if (!override) return match;
+      return {
+        ...match,
+        ai_director: override,
+        explanation: override.explanation || match.explanation
+      };
+    });
+    appState.generatedPlan = appState.matchResults[0] || null;
+  } catch (error) {
+    console.warn("[ai-agent-fallback]", error);
+    appState.aiAgentError = error.message || "AI agent unavailable";
+  }
 }
 
 function renderAIPage() {
@@ -636,6 +724,7 @@ function renderAIPage() {
       </label>
     </section>
     ${renderAIProcess()}
+    ${renderAIDirectorCard()}
     ${renderIntentCard()}
     ${renderMatchResults()}
   `;
@@ -673,6 +762,24 @@ function renderAIPage() {
     render();
     showToast("已清空，重新输入条件再匹配");
   });
+}
+
+function renderAIDirectorCard() {
+  if (appState.aiLoading || (!appState.aiDirector && !appState.aiAgentError)) return "";
+  if (appState.aiAgentError) {
+    return `<section class="card ai-state"><div class="analyzing-dot"></div><div><b>AI Agent 使用本地兜底</b><p>${escapeHTML(appState.aiAgentError)}</p></div></section>`;
+  }
+  const layer = appState.aiDirector.merchant_layer || {};
+  return `
+    <section class="card ai-state is-done">
+      <div class="analyzing-dot"></div>
+      <div>
+        <b>Gemini Agent 已生成成局导演建议</b>
+        <p>${escapeHTML(appState.aiDirector.director_brief || layer.summary || "已增强方案解释与履约风险。")}</p>
+        ${layer.freshness_label ? `<p style="margin-top:6px;font-size:12px;color:#6b7280;">${escapeHTML(layer.freshness_label)}</p>` : ""}
+      </div>
+    </section>
+  `;
 }
 
 function renderIntentCard() {
@@ -763,6 +870,11 @@ function renderAIProcess() {
 
 function renderMatchCard(match, index) {
   const userLikesCat = match.user.preferred_categories && match.user.preferred_categories.includes(match.intent.category_preference);
+  const director = match.ai_director || {};
+  const planTitle = director.headline || "AI 成局方案";
+  const planCopy = director.explanation
+    ? `${director.explanation}${director.closing_line ? ` ${director.closing_line}` : ""}`
+    : `推荐你和 ${match.user.nickname} ${match.suggested_time} 去 ${match.poi.name}。${match.explanation} 备选地点：${match.backup_poi ? match.backup_poi.name : "附近同类商家"}。`;
   return `
     <article class="match-card card">
       <div class="match-top">
@@ -790,8 +902,10 @@ function renderMatchCard(match, index) {
         </ul>
       </details>
       <div class="plan-copy">
-        <b>AI 成局方案</b>
-        <p>推荐你和 ${match.user.nickname} ${match.suggested_time} 去 ${match.poi.name}。${match.explanation} 备选地点：${match.backup_poi ? match.backup_poi.name : "附近同类商家"}。</p>
+        <b>${escapeHTML(planTitle)}</b>
+        <p>${escapeHTML(planCopy)}</p>
+        ${director.risk ? `<p style="margin-top:6px;color:#6b7280;">风险预判：${escapeHTML(director.risk)}</p>` : ""}
+        ${director.conversion_prompt ? `<p style="margin-top:6px;color:#92400e;">${escapeHTML(director.conversion_prompt)}</p>` : ""}
       </div>
       <button class="primary-button wide" data-select-match="${index}">选择这个搭子</button>
     </article>

@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+import json
+import mimetypes
+import os
+import ssl
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib import error, request
+
+
+ROOT = Path(__file__).resolve().parent
+GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+
+AI_MATCH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "intent_patch",
+        "director_brief",
+        "clarifying_questions",
+        "plan_overrides",
+        "merchant_layer",
+        "demo_hooks",
+    ],
+    "properties": {
+        "intent_patch": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "activity_type",
+                "category_preference",
+                "budget_min",
+                "budget_max",
+                "social_style",
+                "group_size",
+                "target_time",
+                "distance_tolerance_km",
+                "confidence",
+            ],
+            "properties": {
+                "activity_type": {"type": "string"},
+                "category_preference": {"type": "string"},
+                "budget_min": {"type": "number"},
+                "budget_max": {"type": "number"},
+                "social_style": {"type": "string"},
+                "group_size": {"type": "string"},
+                "target_time": {"type": "string"},
+                "distance_tolerance_km": {"type": "number"},
+                "confidence": {"type": "number"},
+            },
+        },
+        "director_brief": {"type": "string"},
+        "clarifying_questions": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "plan_overrides": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "plan_index",
+                    "match_id",
+                    "headline",
+                    "explanation",
+                    "closing_line",
+                    "risk",
+                    "conversion_prompt",
+                    "score_reason",
+                ],
+                "properties": {
+                    "plan_index": {"type": "integer"},
+                    "match_id": {"type": "string"},
+                    "headline": {"type": "string"},
+                    "explanation": {"type": "string"},
+                    "closing_line": {"type": "string"},
+                    "risk": {"type": "string"},
+                    "conversion_prompt": {"type": "string"},
+                    "score_reason": {"type": "string"},
+                },
+            },
+        },
+        "merchant_layer": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "summary",
+                "real_fields",
+                "simulated_fields",
+                "generated_fields",
+                "freshness_label",
+            ],
+            "properties": {
+                "summary": {"type": "string"},
+                "real_fields": {"type": "array", "items": {"type": "string"}},
+                "simulated_fields": {"type": "array", "items": {"type": "string"}},
+                "generated_fields": {"type": "array", "items": {"type": "string"}},
+                "freshness_label": {"type": "string"},
+            },
+        },
+        "demo_hooks": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+def to_openapi_schema(schema):
+    if isinstance(schema, list):
+        return [to_openapi_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    converted = {}
+    for key, value in schema.items():
+        if key in {"additionalProperties"}:
+            continue
+        converted[key] = to_openapi_schema(value)
+
+    if converted.get("type") == "object" and "properties" in converted:
+        converted["propertyOrdering"] = list(converted["properties"].keys())
+    return converted
+
+
+DEVELOPER_PROMPT = """
+你是美团本地生活比赛 demo 的 AI 成局导演。
+目标：把用户一句自然语言需求，变成可履约、可解释、可商业转化的到店方案。
+
+约束：
+1. 不编造商家。只能使用输入里的 merchant_candidates 和 local_plans。
+2. 保留本地规则评分作为真相源；你只增强意图理解、解释、风险预判和演示话术。
+3. 明确区分真实字段、模拟字段、生成字段，让答辩时能解释数据层。
+4. 输出中文短句，适合直接展示在手机 UI 上。
+5. 强调“成局”而不是泛社交聊天：时间、地点、参与者、团购/到店转化、异常兜底。
+"""
+
+
+def load_env_file():
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("#") or "=" not in clean:
+            continue
+        key, value = clean.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def json_response(handler, status, payload):
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def https_context():
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def extract_gemini_text(response_payload):
+    texts = []
+    for candidate in response_payload.get("candidates", []):
+        content = candidate.get("content") or {}
+        for part in content.get("parts", []):
+            text = part.get("text")
+            if isinstance(text, str):
+                texts.append(text)
+    if texts:
+        return "".join(texts).strip()
+    return ""
+
+
+def call_gemini(client_payload):
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    body = {
+        "systemInstruction": {
+            "parts": [{"text": DEVELOPER_PROMPT.strip()}],
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            "请基于以下 JSON 输入生成 AI 成局导演结果，"
+                            "只能返回符合 generationConfig.responseSchema 的 JSON。\n"
+                            f"{json.dumps(client_payload, ensure_ascii=False)}"
+                        )
+                    }
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.25,
+            "maxOutputTokens": 6000,
+            "responseMimeType": "application/json",
+            "responseSchema": to_openapi_schema(AI_MATCH_SCHEMA),
+        },
+    }
+    req = request.Request(
+        GEMINI_URL_TEMPLATE.format(model=model),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=25, context=https_context()) as resp:
+            raw = resp.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini API error {exc.code}: {detail[:500]}") from exc
+
+    payload = json.loads(raw)
+    text = extract_gemini_text(payload)
+    if not text:
+        block_reason = payload.get("promptFeedback", {}).get("blockReason")
+        suffix = f": {block_reason}" if block_reason else ""
+        raise RuntimeError(f"Gemini response did not include output text{suffix}")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        snippet = text[:500].replace("\n", " ")
+        raise RuntimeError(f"Gemini returned invalid JSON at {exc.lineno}:{exc.colno}: {snippet}") from exc
+
+
+class Handler(SimpleHTTPRequestHandler):
+    def translate_path(self, path):
+        clean = path.split("?", 1)[0].split("#", 1)[0].lstrip("/")
+        target = (ROOT / clean).resolve()
+        if target != ROOT and ROOT not in target.parents:
+            target = ROOT / "index.html"
+        return str(target)
+
+    def do_POST(self):
+        if self.path.split("?", 1)[0] != "/api/ai-match":
+            json_response(self, 404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            client_payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            result = call_gemini(client_payload)
+            json_response(self, 200, result)
+        except Exception as exc:
+            json_response(self, 503, {"error": str(exc), "fallback": True})
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+
+def main():
+    load_env_file()
+    mimetypes.add_type("application/javascript", ".js")
+    port = int(os.environ.get("PORT", "8000"))
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    print(f"Serving http://127.0.0.1:{port}")
+    print("Set GEMINI_API_KEY in your shell to enable /api/ai-match.")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
