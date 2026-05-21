@@ -3,32 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Meituan Together | 一起去</title>
+    <title>走起不 · 本地生活搭子</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
           extend: {
             colors: {
-              brand: "#f7c600",
-              "brand-edge": "#e8b600",
-              ink: "#1f2329",
-              muted: "#667085",
-              line: "#ebedf0",
-              surface: "#f8f9fb",
+              brand: "#FFE033",
+              "brand-edge": "#F5C800",
+              "brand-ink": "#1A1A1A",
+              ink: "#1A1A1A",
+              muted: "#999999",
+              line: "#EBEBEB",
+              surface: "#F7F7F7",
+              wash: "#F5F5F5",
+              accent: "#FF6B35",
+              hot: "#FF2442",
+              ok: "#58CC02",
             },
             fontFamily: {
               sans: [
                 "-apple-system",
                 "BlinkMacSystemFont",
                 '"PingFang SC"',
-                '"Microsoft YaHei"',
+                '"Helvetica Neue"',
                 "sans-serif",
               ],
             },
             boxShadow: {
-              card: "0 2px 12px rgba(15,23,42,0.06)",
-              sheet: "0 -10px 30px rgba(15,23,42,0.12)",
+              card: "0 2px 16px rgba(0,0,0,0.06)",
+              sheet: "0 -8px 32px rgba(0,0,0,0.1)",
+              btn: "0 3px 0 #E6BC00, 0 6px 16px rgba(255,193,0,0.25)",
             },
           },
         },
@@ -38,9 +44,9 @@
     <style type="text/tailwindcss">
       @layer base {
         body {
-          @apply font-sans bg-[#f5f5f5] text-ink text-sm;
+          @apply font-sans bg-wash text-ink text-[15px] antialiased;
           margin: 0;
-          padding-bottom: 76px;
+          padding-bottom: 72px;
         }
         button,
         textarea {
@@ -56,13 +62,13 @@
           margin: 0;
         }
         h1 {
-          @apply text-[32px] font-bold leading-tight;
+          @apply text-[24px] font-bold leading-tight;
         }
         h2 {
-          @apply text-[22px] font-semibold leading-snug;
+          @apply text-[20px] font-bold leading-snug;
         }
         h3 {
-          @apply text-base font-semibold leading-snug;
+          @apply text-[17px] font-bold leading-snug;
         }
         .muted {
           @apply text-muted leading-relaxed;
@@ -72,21 +78,67 @@
       @layer components {
         /* ---------- Layout ---------- */
         .phone-shell {
-          @apply mx-auto min-h-screen bg-[#f7f8fa] w-full max-w-[430px];
-          padding: 14px 12px 18px;
+          @apply mx-auto min-h-screen bg-wash w-full max-w-[430px];
+          padding: 0 0 18px;
         }
         .app-header {
-          @apply flex justify-between items-center;
-          padding: 6px 2px 12px;
+          @apply sticky top-0 z-30 bg-wash px-3 pt-2 pb-3;
         }
-        .app-header h1 {
-          @apply text-[32px];
+        .header-top {
+          @apply flex items-center justify-between mb-2.5 gap-2;
+        }
+        .app-logo {
+          @apply flex items-center gap-2.5 min-w-0 no-underline text-inherit;
+        }
+        .logo-mascot {
+          @apply shrink-0 drop-shadow-sm;
+          width: 46px;
+          height: 46px;
+        }
+        .logo-type {
+          @apply flex flex-col min-w-0 leading-none;
+        }
+        .logo-type strong {
+          @apply text-[24px] font-black text-ink tracking-tight;
+          letter-spacing: -0.04em;
+        }
+        .logo-type small {
+          @apply text-[11px] text-muted font-semibold mt-1 truncate;
+        }
+        .header-action {
+          @apply text-xs font-semibold text-muted bg-white border border-line rounded-full px-3 py-1.5;
+        }
+        .location-pill {
+          @apply w-full flex items-center gap-2.5 bg-white rounded-2xl border border-line px-3.5 py-3 text-left shadow-card;
+        }
+        .loc-pin {
+          @apply w-9 h-9 rounded-xl bg-brand grid place-items-center shrink-0;
+        }
+        .loc-pin svg { display: block; }
+        .loc-copy {
+          @apply flex-1 min-w-0;
+        }
+        .loc-copy b {
+          @apply block text-[16px] font-bold text-ink truncate;
+        }
+        .loc-copy small {
+          @apply block text-xs text-muted mt-0.5 truncate;
+        }
+        .loc-chev {
+          @apply text-muted text-lg leading-none shrink-0;
         }
         .eyebrow {
-          @apply text-muted text-xs font-extrabold uppercase;
+          @apply text-muted text-xs font-semibold;
         }
-        .icon-button {
-          @apply w-10 h-10 rounded-full bg-white border border-line text-xl;
+        .section-head {
+          @apply flex items-center justify-between mb-3;
+        }
+        .section-head h3 {
+          @apply text-[17px] font-bold;
+        }
+        .section-head a,
+        .section-head button.linkish {
+          @apply text-xs font-semibold text-accent bg-transparent border-0 p-0 cursor-pointer;
         }
         .page {
           display: none;
@@ -96,31 +148,49 @@
         }
 
         /* ---------- Cards (一级 / 二级降级) ---------- */
-        .card {
-          @apply bg-white border border-[#f0f1f3] rounded-3xl p-5 mb-3.5 shadow-card;
+        .page > .card,
+        .map-page-layout > .card,
+        #aiPage .card,
+        #chatPage .card,
+        #successPage .card,
+        #profilePage .card {
+          @apply bg-white border-0 rounded-[18px] p-4 mb-3 shadow-card mx-3;
         }
         .card .card {
-          @apply bg-surface border-[#eceef2] rounded-2xl shadow-none mb-2;
+          @apply bg-surface border-0 rounded-2xl shadow-none mb-2 mx-0;
           padding: 12px 14px;
+        }
+        .map-page-layout .scene-filter-host {
+          @apply mx-3;
+        }
+        .map-page-layout .map-card {
+          @apply mx-3;
+        }
+        .map-page-layout .poi-sheet {
+          @apply mx-3;
         }
 
         /* ---------- Buttons ---------- */
         .primary-button {
-          @apply bg-brand text-gray-900 border border-brand-edge rounded-xl px-4 font-semibold text-base;
-          min-height: 48px;
+          @apply bg-brand text-brand-ink border-0 rounded-2xl px-4 font-bold text-[16px] shadow-btn;
+          min-height: 50px;
+        }
+        .primary-button:active {
+          transform: translateY(2px);
+          box-shadow: none;
         }
         .primary-button.is-loading {
           @apply opacity-75 relative;
         }
         .secondary-button {
-          @apply bg-white border border-gray-300 text-gray-700 rounded-xl px-4 font-semibold;
-          min-height: 48px;
+          @apply bg-white border-2 border-line text-ink rounded-2xl px-4 font-bold;
+          min-height: 50px;
         }
         .wide {
           @apply w-full;
         }
         .text-button {
-          @apply bg-white border border-line rounded-[10px] px-3 py-2 font-extrabold whitespace-nowrap text-ink;
+          @apply bg-white border border-line rounded-lg px-3 py-2 font-medium whitespace-nowrap text-ink;
         }
 
         /* ---------- Filter chips ---------- */
@@ -129,19 +199,23 @@
         .quick-replies {
           @apply flex gap-2 overflow-x-auto pb-2;
         }
-        #filterTabsRow {
+        #filterTabsRow,
+        .scene-filter-host {
           @apply flex flex-col gap-0 overflow-visible pb-1;
+        }
+        .scene-nav.card {
+          @apply shadow-sm;
         }
         .filter-chip,
         .prompt-row button,
         .quick-replies button {
-          @apply bg-white border border-line rounded-[10px] px-3 py-2 font-extrabold whitespace-nowrap text-ink transition-colors;
+          @apply bg-white border border-line rounded-lg px-3 py-2 font-medium whitespace-nowrap text-ink/90 transition-colors;
         }
         .filter-chip:hover:not(.is-active) {
-          @apply bg-gray-50 border-gray-400;
+          @apply bg-surface border-muted/40;
         }
         .filter-chip.is-active {
-          @apply bg-gray-900 text-white;
+          @apply bg-brand text-brand-ink border-brand font-bold;
         }
         .filter-chip:active {
           transform: scale(0.92);
@@ -150,10 +224,10 @@
           @apply grid grid-cols-2 gap-2 mt-2.5;
         }
         .chip-count {
-          @apply inline-block ml-1 bg-black/10 rounded-full text-[10px] px-1.5 py-px font-extrabold align-middle;
+          @apply inline-block ml-1 bg-black/6 rounded-full text-[10px] px-1.5 py-px font-medium align-middle;
         }
         .filter-chip.is-active .chip-count {
-          @apply bg-white/25;
+          @apply bg-white/20;
         }
 
         /* ---------- Category chips ---------- */
@@ -182,27 +256,46 @@
           @apply bg-gray-100 rounded-full px-2.5 py-1.5 text-gray-700 text-xs;
         }
         .confirm-row span.ok {
-          @apply bg-green-100 text-green-800;
+          @apply bg-[#e6f9d5] text-[#58a700] font-semibold;
         }
 
         /* ---------- Map stats ---------- */
-        .map-stats {
-          @apply grid grid-cols-4 gap-2;
+        .stat-strip {
+          @apply flex gap-2 overflow-x-auto pb-1 snap-x snap-mandatory;
         }
-        .map-stats div {
-          min-width: 0;
+        .stat-pill {
+          @apply flex-shrink-0 snap-start bg-white rounded-2xl px-3.5 py-2.5 min-w-[88px] shadow-card;
         }
-        .map-stats b {
-          @apply block text-[17px];
+        .stat-pill b {
+          @apply block text-[20px] font-black text-ink leading-none;
         }
-        .map-stats span {
-          @apply block text-muted text-[11px] mt-0.5;
+        .stat-pill span {
+          @apply block text-[11px] text-muted mt-1 font-medium;
+        }
+        .stat-pill.is-hot b {
+          @apply text-hot;
+        }
+        .stat-pill.is-brand {
+          @apply bg-brand/30 border border-brand/50;
+        }
+        .stat-pill.is-brand b {
+          @apply text-brand-ink;
         }
 
-        /* ---------- POI sheet ---------- */
-        .poi-sheet {
-          @apply relative z-[5] rounded-t-[18px] rounded-b-xl overflow-hidden shadow-sheet;
-          margin-top: -84px;
+        /* ---------- Map + merchant：上下两块，不叠在地图上 ---------- */
+        .map-page-layout {
+          @apply flex flex-col gap-3;
+        }
+        .map-block {
+          @apply mb-0 p-0 overflow-hidden;
+        }
+        .merchant-block.poi-sheet {
+          @apply relative z-[1] rounded-2xl overflow-hidden shadow-card mb-3.5;
+          margin-top: 0;
+          padding: 0;
+        }
+        .poi-sheet .merchant-detail-body {
+          @apply px-4 pb-4 pt-3;
         }
         .sheet-title-row {
           @apply flex items-center gap-2 flex-wrap mb-1;
@@ -211,7 +304,7 @@
           margin: 0;
         }
         .sheet-match {
-          @apply bg-gray-900 text-white text-[11px] font-extrabold rounded-full whitespace-nowrap;
+          @apply bg-hot text-white text-[11px] font-bold rounded-md whitespace-nowrap;
           padding: 3px 8px;
         }
 
@@ -228,8 +321,8 @@
           scroll-snap-align: start;
         }
         .demand-card.is-selected {
-          @apply border-gray-300 bg-slate-50;
-          box-shadow: inset 0 0 0 1px #cbd5e1;
+          @apply border-brand bg-brand/10;
+          box-shadow: inset 0 0 0 2px #FFE033;
         }
         .demand-card p,
         .demand-card small {
@@ -245,12 +338,12 @@
           grid-template-columns: 28px 1fr;
         }
         .analyzing-dot {
-          @apply w-4 h-4 rounded-full bg-blue-500;
-          box-shadow: 0 0 0 7px rgba(59, 130, 246, 0.2);
+          @apply w-4 h-4 rounded-full bg-ok;
+          box-shadow: 0 0 0 6px rgba(88, 204, 2, 0.2);
         }
         .ai-state.is-done .analyzing-dot {
-          @apply bg-green-600;
-          box-shadow: 0 0 0 7px rgba(22, 163, 74, 0.12);
+          @apply bg-ok;
+          box-shadow: 0 0 0 6px rgba(88, 204, 2, 0.12);
         }
         .ai-steps {
           @apply grid gap-2.5;
@@ -260,16 +353,19 @@
           grid-template-columns: 28px 1fr;
         }
         .ai-step span {
-          @apply w-6 h-6 rounded-full grid place-items-center bg-gray-100 font-extrabold text-xs;
+          @apply w-6 h-6 rounded-full grid place-items-center bg-surface border border-line font-medium text-xs text-muted;
         }
         .ai-step.is-active {
           @apply text-ink;
         }
         .ai-step.is-active span {
-          @apply bg-blue-100 text-blue-700;
+          @apply bg-white text-ink border-muted/30;
         }
         .ai-step.is-done span {
-          @apply bg-green-100 text-green-800;
+          @apply bg-ok/15 text-ok border-ok/30 font-bold;
+        }
+        .ai-step.is-active span {
+          @apply bg-brand text-brand-ink border-brand font-bold;
         }
         .result-fade {
           animation: fadeUp 0.32s ease-out both;
@@ -281,7 +377,7 @@
           margin-top: 4px;
         }
         .notice-card {
-          @apply bg-green-50 text-green-800 border border-green-200 rounded-xl p-2.5 mb-2.5 leading-normal;
+          @apply bg-brand/20 text-ink border border-brand/40 rounded-2xl p-3 mb-2.5 leading-normal text-[13px] font-medium;
         }
 
         /* ---------- Match score ---------- */
@@ -320,7 +416,7 @@
           grid-template-columns: 56px 1fr;
         }
         .avatar {
-          @apply w-[54px] h-[54px] rounded-full grid place-items-center bg-gray-900 text-white text-[22px] font-extrabold;
+          @apply w-[54px] h-[54px] rounded-full grid place-items-center bg-brand text-white text-lg font-medium;
         }
         .plan-card {
           @apply sticky top-0 z-[8];
@@ -348,13 +444,13 @@
           @apply ml-auto items-end;
         }
         .message.me span {
-          @apply bg-slate-200 text-slate-900;
+          @apply bg-brand text-brand-ink font-medium;
         }
         .message.other span {
-          @apply bg-indigo-50;
+          @apply bg-white border border-line text-ink;
         }
         .message.ai span {
-          @apply bg-green-50 text-green-900;
+          @apply bg-surface border border-line text-ink/90;
         }
         .confirming-banner {
           @apply my-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-center;
@@ -376,7 +472,7 @@
           padding: 26px 16px;
         }
         .success-mark {
-          @apply w-[68px] h-[68px] mx-auto mb-3 rounded-full grid place-items-center bg-green-100 text-green-800 text-[34px] font-extrabold;
+          @apply w-16 h-16 mx-auto mb-3 rounded-full grid place-items-center bg-ok text-white text-2xl font-black;
         }
         .final-plan-card {
           @apply my-3.5 border border-line rounded-xl overflow-hidden text-left;
@@ -405,21 +501,36 @@
 
         /* ---------- Bottom nav ---------- */
         .bottom-nav {
-          @apply fixed bottom-0 h-[66px] bg-white border-t border-line grid grid-cols-4 z-20 w-full max-w-[430px];
+          @apply fixed bottom-0 h-[58px] bg-white border-t border-line grid grid-cols-4 z-20 w-full max-w-[430px] pb-[env(safe-area-inset-bottom)];
           left: 50%;
           transform: translateX(-50%);
+          box-shadow: 0 -4px 20px rgba(0,0,0,0.04);
         }
         .nav-item {
-          @apply bg-white text-gray-500 font-extrabold;
+          @apply bg-transparent text-muted text-[10px] font-semibold flex flex-col items-center justify-center gap-0.5 pt-1;
         }
         .nav-item.is-active {
-          @apply text-gray-900;
+          @apply text-ink;
+        }
+        .nav-item.is-active .nav-icon {
+          @apply bg-brand rounded-xl;
+        }
+        .nav-icon {
+          @apply w-7 h-7 grid place-items-center rounded-lg transition-colors;
+        }
+        .nav-icon svg {
+          display: block;
+        }
+        .nav-item[data-page="chat"] {
+          position: relative;
         }
         .nav-dot {
-          @apply inline-block bg-red-500 text-white rounded-full text-[10px] not-italic font-extrabold align-middle;
-          padding: 1px 5px;
-          margin-left: 3px;
-          line-height: 1.4;
+          @apply absolute top-0 right-[18%] bg-hot text-white rounded-full text-[9px] not-italic font-bold;
+          min-width: 14px;
+          height: 14px;
+          line-height: 14px;
+          text-align: center;
+          padding: 0 4px;
         }
 
         /* ---------- Toast ---------- */
@@ -470,8 +581,8 @@
           @apply flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl mb-3 text-[13px];
           padding: 9px 12px;
         }
-        .deal-bar .deal-icon {
-          @apply text-base;
+        .deal-bar {
+          @apply bg-[#fff8f0] border-[#ffe4c4];
         }
         .deal-bar .deal-off {
           @apply ml-auto font-extrabold text-slate-500 text-[11px];
@@ -480,11 +591,11 @@
           @apply grid grid-cols-2 gap-2 mb-3.5;
         }
         .cta-nav-btn {
-          @apply flex items-center justify-center bg-blue-50 border border-blue-200 rounded-xl text-[13px] font-extrabold text-blue-700 no-underline cursor-pointer transition-colors;
+          @apply flex items-center justify-center bg-white border border-line rounded-xl text-[13px] font-medium text-ink no-underline cursor-pointer transition-colors;
           padding: 10px;
         }
         .cta-nav-btn:hover {
-          @apply bg-blue-100;
+          @apply bg-surface;
         }
         .cta-detail-btn {
           @apply bg-slate-50 border border-line rounded-xl text-[13px] font-extrabold text-muted cursor-pointer transition-colors;
@@ -494,16 +605,16 @@
           @apply bg-slate-100;
         }
         .cta-match-btn {
-          @apply bg-brand border border-brand-edge rounded-xl px-4 font-semibold text-base text-gray-900 cursor-pointer transition-opacity;
-          min-height: 48px;
+          @apply bg-brand border-0 rounded-2xl px-4 font-bold text-[16px] text-brand-ink cursor-pointer shadow-btn;
+          min-height: 50px;
         }
         .cta-match-btn:hover {
           @apply opacity-90;
         }
 
         .open-badge {
-          @apply bg-green-100 text-green-800 rounded-full text-[11px] font-extrabold;
-          padding: 3px 9px;
+          @apply bg-ok/15 text-ok rounded-md text-[11px] font-bold;
+          padding: 3px 8px;
         }
 
         /* ---------- Modal ---------- */
@@ -520,7 +631,7 @@
           padding: 18px 18px 12px;
         }
         .modal-close {
-          @apply w-8 h-8 rounded-full bg-gray-100 text-gray-700 text-sm;
+          @apply rounded-lg bg-transparent text-muted text-sm font-medium px-2 py-1;
         }
         .modal-info {
           @apply mt-1;
@@ -606,7 +717,7 @@
           @apply bg-gray-50;
         }
         .gc-list-icon {
-          @apply w-11 h-11 rounded-xl bg-[#ececec] grid place-items-center text-[22px] flex-shrink-0;
+          @apply w-11 h-11 rounded-xl bg-surface border border-line grid place-items-center flex-shrink-0;
         }
         .gc-list-body {
           @apply flex-1 min-w-0;
@@ -628,7 +739,7 @@
           @apply flex items-center gap-3;
         }
         .back-text-btn {
-          @apply bg-transparent border-0 text-blue-500 font-extrabold text-sm cursor-pointer whitespace-nowrap;
+          @apply bg-transparent border-0 text-muted font-medium text-sm cursor-pointer whitespace-nowrap;
           padding: 4px 0;
         }
         .gc-header-info {
@@ -687,14 +798,45 @@
         .pct-row-label {
           @apply text-muted font-extrabold;
         }
-        .plan-label-A {
-          @apply text-green-600;
-        }
-        .plan-label-B {
-          @apply text-blue-600;
-        }
+        .plan-label-A,
+        .plan-label-B,
         .plan-label-C {
-          @apply text-purple-600;
+          @apply text-ink/70;
+        }
+        .scene-icon {
+          @apply inline-grid place-items-center rounded-[14px] text-[15px] font-black shrink-0;
+          width: 44px;
+          height: 44px;
+          color: var(--icon-color, #FF6B35);
+          background: var(--icon-bg, #FFF4ED);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .scene-icon.sm {
+          width: 36px;
+          height: 36px;
+          font-size: 13px;
+          border-radius: 12px;
+        }
+        .scene-icon.xs {
+          width: 28px;
+          height: 28px;
+          font-size: 11px;
+          border-radius: 10px;
+        }
+        .rating-num {
+          @apply text-[17px] font-black text-accent tabular-nums;
+        }
+        .rating-star {
+          @apply text-accent text-sm tracking-tight;
+        }
+        .progress-track {
+          @apply h-2.5 bg-line rounded-full overflow-hidden;
+        }
+        .progress-fill {
+          @apply h-full bg-brand rounded-full transition-all;
+        }
+        .deal-tag {
+          @apply inline-block bg-hot text-white text-[10px] font-bold rounded px-1.5 py-0.5 mr-1.5 align-middle;
         }
 
         /* ---------- Why details ---------- */
@@ -717,7 +859,7 @@
 
         /* ---------- Verified ---------- */
         .verified-badge {
-          @apply inline-block bg-green-100 text-green-800 rounded-full text-[10px] font-extrabold align-middle;
+          @apply inline-block bg-surface text-muted border border-line rounded-full text-[10px] font-medium align-middle;
           padding: 2px 7px;
         }
 
@@ -730,8 +872,8 @@
           margin-top: 6px;
         }
         .intent-tag {
-          @apply bg-gray-100 rounded-full text-gray-700 text-xs font-extrabold;
-          padding: 5px 10px;
+          @apply bg-surface rounded-full text-ink text-xs font-semibold;
+          padding: 6px 12px;
         }
 
         /* ---------- Safety ---------- */
@@ -745,9 +887,196 @@
 
         /* ---------- Textarea ---------- */
         textarea {
-          @apply w-full border border-line rounded-xl p-3 leading-relaxed my-3;
-          min-height: 126px;
+          @apply w-full border-2 border-line rounded-2xl p-3.5 leading-relaxed my-3 bg-white text-[15px];
+          min-height: 120px;
           resize: vertical;
+        }
+        textarea:focus {
+          outline: none;
+          border-color: #FFE033;
+          box-shadow: 0 0 0 3px rgba(255, 224, 51, 0.35);
+        }
+
+        /* ---------- 生活圈选择页 ---------- */
+        .circle-page {
+          @apply fixed inset-0 z-[80] bg-wash flex flex-col;
+          max-width: 430px;
+          left: 50%;
+          transform: translateX(-50%);
+        }
+        .circle-page-header {
+          @apply flex items-center gap-2 px-3 py-3 bg-white border-b border-line shrink-0;
+        }
+        .circle-page-header h1 {
+          @apply text-[18px] font-bold flex-1;
+        }
+        .circle-page-body {
+          @apply flex-1 overflow-y-auto px-3 pb-8;
+        }
+        .circle-hero {
+          @apply rounded-2xl p-4 mt-3 mb-3 text-left;
+          background: var(--circle-tint, #FFF8E6);
+          border: 1px solid rgba(0,0,0,.04);
+        }
+        .circle-hero b {
+          @apply block text-lg font-black text-ink;
+        }
+        .circle-hero p {
+          @apply text-[13px] text-muted mt-1 leading-relaxed;
+        }
+        .circle-mini-map {
+          @apply relative h-[120px] rounded-xl mt-3 overflow-hidden bg-[#e8ecf0];
+        }
+        .circle-tag-row {
+          @apply flex flex-wrap gap-1.5 mt-3;
+        }
+        .circle-tag {
+          @apply text-[11px] font-semibold rounded-full px-2.5 py-1 bg-white/80 text-ink/80;
+        }
+        .circle-list {
+          @apply grid gap-2.5 mt-2;
+        }
+        .circle-card {
+          @apply w-full text-left bg-white rounded-2xl p-3.5 border-2 border-transparent shadow-card transition-colors;
+        }
+        .circle-card.is-active {
+          border-color: #FFE033;
+          box-shadow: 0 0 0 1px #FFE033, 0 4px 16px rgba(255,224,51,.2);
+        }
+        .circle-card-head {
+          @apply flex items-start gap-3;
+        }
+        .circle-card-icon {
+          @apply w-11 h-11 rounded-xl grid place-items-center text-base font-black shrink-0;
+          background: var(--card-tint, #f5f5f5);
+          color: var(--card-accent, #FF6B35);
+        }
+        .circle-card h3 {
+          @apply text-[16px] font-bold;
+        }
+        .circle-card .circle-meta {
+          @apply text-xs text-muted mt-0.5;
+        }
+        .circle-card-stats {
+          @apply flex gap-3 mt-2.5 text-[12px] text-muted;
+        }
+        .circle-card-stats b {
+          @apply text-ink font-bold;
+        }
+        .circle-live {
+          @apply mt-4;
+        }
+        .circle-live-item {
+          @apply flex items-center gap-2.5 py-2.5 border-b border-line last:border-0;
+        }
+        .circle-live-avatar {
+          @apply w-9 h-9 rounded-full bg-brand text-brand-ink grid place-items-center font-bold text-sm shrink-0;
+        }
+        .radius-row {
+          @apply flex gap-2 mt-3;
+        }
+        .radius-chip {
+          @apply flex-1 py-2 rounded-xl border-2 border-line bg-white text-center text-[13px] font-semibold text-muted;
+        }
+        .radius-chip.is-active {
+          @apply border-brand bg-brand/20 text-brand-ink;
+        }
+        .circle-pulse-bar {
+          @apply flex items-center justify-between gap-2 mt-2 text-[12px];
+        }
+        .circle-pulse-bar .live-dot {
+          @apply w-2 h-2 rounded-full bg-[#58cc02] shrink-0;
+          animation: livePulse 1.4s ease-in-out infinite;
+        }
+        .circle-weather {
+          @apply inline-flex items-center gap-1.5 rounded-full bg-white/90 px-2.5 py-1 text-[11px] font-semibold text-ink/80;
+        }
+        .circle-ad-line {
+          @apply text-[13px] text-ink/75 italic mt-2 leading-snug;
+        }
+        .circle-time-row {
+          @apply flex gap-2 mt-3;
+        }
+        .circle-time-chip {
+          @apply flex-1 py-2.5 rounded-xl border-2 border-white/80 bg-white/60 text-center text-[12px] font-bold text-muted;
+        }
+        .circle-time-chip.is-active {
+          @apply border-ink/20 bg-white text-ink shadow-sm;
+        }
+        .circle-moment-list {
+          @apply grid gap-2 mt-2;
+        }
+        .circle-moment {
+          @apply bg-white rounded-2xl p-3 shadow-card text-left w-full border-0;
+        }
+        .circle-moment-head {
+          @apply flex items-center gap-2 mb-1.5;
+        }
+        .circle-moment-head b { @apply text-[14px]; }
+        .circle-moment p { @apply text-[13px] text-ink/85 leading-snug; }
+        .circle-moment small { @apply text-[11px] text-muted; }
+        .circle-trend-scroll {
+          @apply flex gap-2 overflow-x-auto pb-1 mt-2;
+        }
+        .circle-trend-bubble {
+          @apply shrink-0 px-3 py-2 rounded-full bg-white border border-line text-[12px] font-semibold text-ink whitespace-nowrap;
+        }
+        .circle-hot-scroll {
+          @apply flex gap-2.5 overflow-x-auto pb-2 mt-2 snap-x;
+        }
+        .circle-hot-card {
+          @apply shrink-0 w-[132px] snap-start rounded-2xl overflow-hidden bg-white shadow-card text-left border-0 p-0;
+        }
+        .circle-hot-cover {
+          @apply h-[72px] bg-cover bg-center;
+        }
+        .circle-hot-body {
+          @apply p-2.5;
+        }
+        .circle-hot-body b {
+          @apply text-[13px] block truncate;
+        }
+        .circle-hot-body span {
+          @apply text-[11px] text-muted;
+        }
+        .circle-inspire-grid {
+          @apply grid gap-2 mt-2;
+        }
+        .circle-inspire {
+          @apply text-left rounded-2xl p-3.5 border-2 border-line bg-white w-full;
+        }
+        .circle-inspire b { @apply text-[14px] block; }
+        .circle-inspire span { @apply text-[12px] text-muted mt-1 block; }
+        .circle-invite {
+          @apply rounded-2xl p-4 mt-3 mb-2 text-center;
+          background: linear-gradient(135deg, #fff8e6 0%, #fff0f5 100%);
+          border: 1px dashed #ffd100;
+        }
+        .circle-vibe-row {
+          @apply flex items-center gap-2 mt-2 text-[12px] text-muted;
+        }
+        .circle-vibe-bar {
+          @apply flex-1 h-1.5 rounded-full bg-white/70 overflow-hidden;
+        }
+        .circle-vibe-fill {
+          @apply h-full rounded-full;
+          background: linear-gradient(90deg, #a8e6cf, #ffe566);
+        }
+        @keyframes livePulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(0.85); }
+        }
+        .map-zone-pulse::after {
+          content: "";
+          position: absolute;
+          inset: 20%;
+          border-radius: 50%;
+          background: rgba(255, 107, 53, 0.2);
+          animation: zonePulse 2s ease-out infinite;
+        }
+        @keyframes zonePulse {
+          0% { transform: scale(0.6); opacity: 0.8; }
+          100% { transform: scale(1.4); opacity: 0; }
         }
       }
     </style>
@@ -755,29 +1084,53 @@
   <body>
     <main class="phone-shell">
       <header class="app-header">
-        <div>
-          <p id="areaLabel" class="eyebrow">Westwood 生活圈</p>
-          <h1>一起去</h1>
+        <div class="header-top">
+          <div class="app-logo" aria-label="走起不">
+            <svg class="logo-mascot" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+              <rect x="5" y="8" width="38" height="34" rx="16" fill="#FFE033"/>
+              <circle cx="18" cy="22" r="2.5" fill="#1A1A1A"/>
+              <circle cx="28" cy="20" r="2.5" fill="#1A1A1A"/>
+              <path d="M17 26c3 2 11 2 14 0" stroke="#1A1A1A" stroke-width="2" stroke-linecap="round"/>
+              <path d="M14 30l4 6 6-10 8 8" stroke="#FF6B35" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M32 14l6-3-2 5 5 1" stroke="#22A06B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="logo-type"><strong>走起不</strong><small>想出门，就走起不</small></span>
+          </div>
+          <button type="button" class="header-action" id="resetDemo" aria-label="重置演示">重置</button>
         </div>
-        <button class="icon-button" id="resetDemo" aria-label="重置">↻</button>
+        <button type="button" class="location-pill" id="areaLabel" aria-label="切换生活圈"></button>
       </header>
 
-      <section id="mapPage" class="page is-active"></section>
-      <section id="aiPage" class="page"></section>
-      <section id="chatPage" class="page"></section>
-      <section id="successPage" class="page"></section>
-      <section id="profilePage" class="page"></section>
+      <div class="page-wrap">
+        <section id="mapPage" class="page is-active"></section>
+        <section id="aiPage" class="page"></section>
+        <section id="chatPage" class="page"></section>
+        <section id="successPage" class="page"></section>
+        <section id="profilePage" class="page"></section>
+      </div>
     </main>
 
-    <nav class="bottom-nav">
-      <button class="nav-item is-active" data-page="map">地图</button>
-      <button class="nav-item" data-page="ai">AI匹配</button>
-      <button class="nav-item" data-page="chat">消息</button>
-      <button class="nav-item" data-page="profile">我的</button>
+    <nav class="bottom-nav" aria-label="主导航">
+      <button class="nav-item is-active" data-page="map" type="button">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+        <span>发现</span>
+      </button>
+      <button class="nav-item" data-page="ai" type="button">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 00-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1114.5 9 2.5 2.5 0 0112 11.5zM5 20v2h14v-2H5z"/></svg>
+        <span>匹配</span>
+      </button>
+      <button class="nav-item" data-page="chat" type="button">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+        <span>消息</span>
+      </button>
+      <button class="nav-item" data-page="profile" type="button">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 12a5 5 0 100-10 5 5 0 000 10zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5z"/></svg>
+        <span>我的</span>
+      </button>
     </nav>
 
-    <script src="./mockData.js?v=20260509e"></script>
-    <script src="./utils/matching.js?v=20260509e"></script>
-    <script src="./app.js?v=20260509e"></script>
+    <script src="./mockData.js?v=20260522a"></script>
+    <script src="./utils/matching.js?v=20260519a"></script>
+    <script src="./app.js?v=20260522d"></script>
   </body>
 </html>

@@ -21,6 +21,30 @@
       activity_type = "夜宵搭子";
       category_preference = /烧烤|烤串/.test(text) ? "烧烤" : "夜宵";
       parseSignals.push("activity");
+    } else if (/跑团|TRPG|克苏鲁|剧本杀|模组|地下城|DND|D&D/.test(text)) {
+      activity_type = "跑团搭子";
+      category_preference = "跑团";
+      parseSignals.push("activity");
+    } else if (/RPG|美式桌游|角色扮演|龙与地下城/.test(text)) {
+      activity_type = "RPG桌游搭子";
+      category_preference = "RPG";
+      parseSignals.push("activity");
+    } else if (/狼人|阿瓦隆|聚会桌游|UNO|卡牌局/.test(text)) {
+      activity_type = "聚会桌游搭子";
+      category_preference = "聚会桌游";
+      parseSignals.push("activity");
+    } else if (/桌游|board\s*game/i.test(text)) {
+      activity_type = "桌游搭子";
+      category_preference = "聚会桌游";
+      parseSignals.push("activity");
+    } else if (/攀岩|抱石|岩馆|攀登|顶绳/.test(text)) {
+      activity_type = "攀岩搭子";
+      category_preference = /抱石/.test(text) ? "抱石" : /新手|体验|入门/.test(text) ? "新手体验" : "运动攀岩";
+      parseSignals.push("activity");
+    } else if (/骑行|骑车|夜骑|自行车|单车|公路车/.test(text)) {
+      activity_type = "骑行搭子";
+      category_preference = /夜骑/.test(text) ? "夜骑路线" : /郊野|长途|越野/.test(text) ? "郊野骑行" : "休闲骑行";
+      parseSignals.push("activity");
     } else if (/火锅/.test(text)) {
       category_preference = "火锅";
       parseSignals.push("category");
@@ -73,7 +97,13 @@
 
   function parseBudget(text, activity_type) {
     const match = text.match(/(?:预算|人均|以内|不超过|别超过|控制在|[$￥¥])\D{0,6}(\d{1,4})|(\d{1,4})\s*(刀|美元|美金|usd|USD|元|块|rmb|RMB)/);
-    if (!match) return activity_type === "KTV搭子" ? 35 : activity_type === "酒吧搭子" ? 35 : 25;
+    if (!match) {
+      if (activity_type === "KTV搭子" || activity_type === "酒吧搭子") return 35;
+      if (activity_type === "攀岩搭子") return 100;
+      if (activity_type === "骑行搭子") return 50;
+      if (/桌游|跑团|RPG/.test(activity_type)) return 40;
+      return 25;
+    }
     const raw = Number(match[1] || match[2]);
     return raw;
   }
@@ -109,8 +139,21 @@
     return { total, breakdown: { distance: Math.round(distance), price: Math.round(price), category: Math.round(category), wait: Math.round(wait), rating: Math.round(rating), heat: Math.round(heat) } };
   }
 
-  function runMatching(intent, users, pois) {
+  function computeReputationScore(user) {
+    const completed = user.completed_plans != null ? user.completed_plans : 5;
+    const noShowRate = user.no_show_rate != null ? user.no_show_rate : 0.08;
+    const rating = user.peer_rating != null ? user.peer_rating : 4.6;
+    const completion = clamp(completed / 20 * 100, 40, 100);
+    const punctual = clamp(100 - noShowRate * 200, 30, 100);
+    const reviews = clamp((rating / 5) * 100, 60, 100);
+    return Math.round(completion * 0.4 + punctual * 0.35 + reviews * 0.25);
+  }
+
+  function runMatching(intent, users, pois, options) {
+    const opts = options || {};
+    const exclude = new Set(opts.excludeUserIds || []);
     const userCandidates = users
+      .filter((user) => !exclude.has(user.user_id))
       .map((user) => ({ user, score: calculateUserMatchScore(intent, user) }))
       .filter(({ score }) => score.total >= 50)
       .sort((a, b) => b.score.total - a.score.total);
@@ -127,8 +170,9 @@
       const user_score = userItem.score.total;
       const place_score = preferredPoi.score.total;
       const time_feasibility_score = timeFeasibilityScore(intent, userItem.user, preferredPoi.poi);
-      const total_score = Math.round(user_score * 0.45 + place_score * 0.40 + time_feasibility_score * 0.15);
-      const score_breakdown = { ...userItem.score.breakdown, place: place_score, time_feasibility: time_feasibility_score };
+      const reputation_score = userItem.user.reputation_score != null ? userItem.user.reputation_score : computeReputationScore(userItem.user);
+      const total_score = Math.round(user_score * 0.42 + place_score * 0.38 + time_feasibility_score * 0.15 + reputation_score * 0.05);
+      const score_breakdown = { ...userItem.score.breakdown, place: place_score, time_feasibility: time_feasibility_score, reputation: reputation_score };
       return {
         match_id: `dynamic_${Date.now()}_${index}`,
         user: userItem.user,
@@ -176,11 +220,24 @@
       .sort((a, b) => Math.abs(a.avg_price - currentPoi.avg_price) - Math.abs(b.avg_price - currentPoi.avg_price) || a.wait_time_min - b.wait_time_min)[0];
   }
 
+  function boardGameMatchesActivity(activity, poi) {
+    if (poi.category !== "桌游") return false;
+    const tags = poi.tags || [];
+    if (activity === "桌游搭子") return true;
+    if (activity === "跑团搭子") return poi.sub_category === "跑团" || tags.includes("跑团") || tags.includes("TRPG");
+    if (activity === "RPG桌游搭子") return poi.sub_category === "RPG" || tags.includes("RPG");
+    if (activity === "聚会桌游搭子") return poi.sub_category === "聚会桌游" || tags.includes("狼人杀") || tags.includes("桌游");
+    return false;
+  }
+
   function activityMatchesPoi(activity, poi) {
     if (activity === "KTV搭子") return poi.category === "KTV";
     if (activity === "酒吧搭子") return poi.category === "酒吧";
     if (activity === "咖啡搭子") return poi.category === "咖啡";
     if (activity === "夜宵搭子") return poi.category === "夜宵";
+    if (activity === "攀岩搭子") return poi.category === "攀岩";
+    if (activity === "骑行搭子") return poi.category === "骑行";
+    if (/桌游|跑团|RPG/.test(activity)) return boardGameMatchesActivity(activity, poi);
     return poi.category === "餐厅";
   }
 
@@ -218,5 +275,5 @@
     return Math.max(min, Math.min(max, value));
   }
 
-  window.MatchingUtils = { parseIntent, runMatching, replanMatch };
+  window.MatchingUtils = { parseIntent, runMatching, replanMatch, computeReputationScore, activityMatchesPoi };
 })();
