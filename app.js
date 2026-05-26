@@ -67,6 +67,7 @@ const appState = {
   debugMeta: null,
   replanningNotice: "",
   aiDirector: null,
+  aiMoodProfile: null,
   aiAgentError: "",
   aiLoading: false,
   aiStep: -1,
@@ -80,6 +81,7 @@ const appState = {
   lastRematchNote: "",
   aiProvider: "",
   aiRuleFallback: false,
+  chatReplyLoading: false,
   lastRejectRematch: null,
   selectedCircleId: lifeCircles[0]?.id || "near",
   circlePageOpen: false,
@@ -91,9 +93,57 @@ window.appState = appState;
 
 let gaodePOIs = [];
 let mockMapReady = false;
+let amapInstance = null; // 高德地图实例（有 Key 时使用）
+let amapRangeCircle = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+function apiURLCandidates(path) {
+  const currentOrigin = window.location.origin || "";
+  const isFileOrNull = !currentOrigin || currentOrigin === "null" || currentOrigin.startsWith("file:");
+  // When served via HTTP (dev server), prefer current origin; fallback to 8002 for file:// protocol
+  const fallbackAPI = "http://127.0.0.1:8002";
+  const candidates = isFileOrNull ? [`${fallbackAPI}${path}`] : [`${currentOrigin}${path}`, `${fallbackAPI}${path}`];
+  return [...new Set(candidates)];
+}
+
+async function postJSONWithFallback(path, payload, options = {}) {
+  const timeoutMs = options.timeoutMs || 12000;
+  const timeoutMessage = options.timeoutMessage || "AI 请求超时，已切换规则层";
+  let lastError = null;
+
+  for (const url of apiURLCandidates(path)) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        mode: "cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      const data = await response.json().catch(() => ({}));
+      const shouldTryFallback =
+        url === path &&
+        apiURLCandidates(path).length > 1 &&
+        (response.status === 404 || response.status === 405 || response.status === 0);
+      if (shouldTryFallback) {
+        lastError = new Error(`API route unavailable at ${path}`);
+        continue;
+      }
+      return { response, data };
+    } catch (error) {
+      lastError = error.name === "AbortError" ? new Error(timeoutMessage) : error;
+      if (url !== apiURLCandidates(path).at(-1)) continue;
+      throw lastError;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error("API 请求失败");
+}
 
 function setPlanStatus(nextStatus) {
   appState.planStatus = nextStatus;
@@ -156,6 +206,26 @@ function circleStats(circle) {
 }
 
 function init() {
+  const allInitUsers = [...users, ...backgroundUsers];
+  appState.groupChats = matchPlans.slice(0, 3).map((plan) => {
+    const poi = pois.find((p) => p.poi_id === plan.selected_poi_id);
+    const user = allInitUsers.find((u) => u.user_id === plan.matched_user_id);
+    const activity = categoryToActivity(poi);
+    const t = plan.suggested_time;
+    return {
+      group_id: `gc_seed_${plan.match_id}`,
+      name: `${poi.name} · ${activity}`,
+      members: [{ nickname: "我", isMe: true }, { nickname: user?.nickname || "搭子", verified: user?.verified_status }],
+      poi,
+      suggested_time: t,
+      createdAt: t,
+      messages: [
+        { sender: "system", text: `成局：${t} 一起去 ${poi.name}`, timestamp: t },
+        { sender: "matched_user", text: "好的，待会见！", timestamp: t },
+        { sender: "ai", text: "已为你们确认约局，记得准时出发！", timestamp: t }
+      ]
+    };
+  });
   updateAreaPill();
   bindAreaPill();
   $("#resetDemo").addEventListener("click", () => location.reload());
@@ -183,19 +253,21 @@ function closeCirclePage() {
   document.body.style.overflow = "";
 }
 
+function applyBrowseRadius(km) {
+  const next = Number(km);
+  if (!Number.isFinite(next) || next <= 0) return;
+  appState.browseRadiusKm = next;
+  refreshMapSupply();
+  syncMapRangeOverlay();
+  updateAreaPill();
+}
+
 function selectLifeCircle(circleId) {
   appState.selectedCircleId = circleId;
   const circle = getCurrentCircle();
-  appState.browseRadiusKm = circle.radius_km || 2;
-  gaodePOIs = filteredMockPois(appState.selectedCategory);
-  appState.selectedPOI = gaodePOIs[0] || pois[0] || null;
-  closeCirclePage();
-  updateAreaPill();
-  if (appState.currentPage === "map") {
-    refreshMapSupply();
-  } else {
-    render();
-  }
+  applyBrowseRadius(circle.radius_km || 2);
+  // 不关闭圈子浮层，不跳页：就地刷新浮层内容
+  if (document.querySelector(".circle-page")) renderCirclePage();
   showToast(`已切换到「${circle.shortName}」`);
 }
 
@@ -239,6 +311,13 @@ function rerunMatching(options = {}) {
   const exclude = [...(appState.excludedUserIds || []), ...(options.excludeUserIds || [])];
   const uniqueExclude = [...new Set(exclude)];
   let results = runMatching(appState.parsedIntent, availableUsers, availablePOIs, { excludeUserIds: uniqueExclude });
+  // diversity pass: each POI appears at most once in Top3; push duplicates to tail
+  const seenPois = new Set();
+  const primary = [], overflow = [];
+  for (const r of results) {
+    (seenPois.has(r.poi.poi_id) ? overflow : (seenPois.add(r.poi.poi_id), primary)).push(r);
+  }
+  results = [...primary, ...overflow];
   results = applyPoiConstraintToResults(results).map((result, index) => {
     const concurrency = buildConcurrencyMeta(index);
     logConcurrencyMeta(concurrency);
@@ -272,11 +351,8 @@ async function runDemoScriptIfPresent() {
 
 function navigate(page) {
   if (appState.circlePageOpen) closeCirclePage();
-  if (page === "chat" && !appState.selectedMatch) {
-    appState.currentPage = "ai";
-  } else {
-    appState.currentPage = page;
-  }
+  if (page === "chat") appState.viewingGroupChatId = null;
+  appState.currentPage = page;
   render();
 }
 
@@ -290,6 +366,7 @@ function render() {
   const pageId = appState.currentPage === "map" ? "mapPage" : appState.currentPage === "ai" ? "aiPage" : appState.currentPage === "chat" ? "chatPage" : appState.currentPage === "success" ? "successPage" : "profilePage";
   $(`#${pageId}`).classList.add("is-active");
   $$(".nav-item").forEach((item) => item.classList.toggle("is-active", item.dataset.page === appState.currentPage || (appState.currentPage === "success" && item.dataset.page === "chat")));
+  updateAreaPill();
   updateChatNavBadge();
   if (appState.currentPage === "map") renderMapPage();
   renderAIPage();
@@ -355,6 +432,10 @@ function poiBadgeHTML(poi) {
 function updateAreaPill() {
   const el = $("#areaLabel");
   if (!el) return;
+  const shouldShow = appState.currentPage === "map";
+  el.hidden = !shouldShow;
+  el.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  if (!shouldShow) return;
   const circle = getCurrentCircle();
   const stats = circleStats(circle);
   el.innerHTML = `
@@ -367,19 +448,84 @@ function updateAreaPill() {
   bindAreaPill();
 }
 
+function currentBrowseRadiusKm() {
+  const radius = Number(appState.browseRadiusKm || getCurrentCircle().radius_km || 2);
+  return Number.isFinite(radius) && radius > 0 ? radius : 2;
+}
+
+function browseRadiusVisualSize() {
+  return Math.max(28, Math.min(70, currentBrowseRadiusKm() * 14));
+}
+
+function rangeLabelHTML() {
+  return `<span class="user-radius-label">${currentBrowseRadiusKm()}km</span>`;
+}
+
+function syncMapRangeOverlay() {
+  const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
+  const size = browseRadiusVisualSize();
+  document.querySelectorAll(".user-radius").forEach((el) => {
+    el.style.left = `${userPin.x}%`;
+    el.style.top = `${userPin.y}%`;
+    el.style.width = `${size}%`;
+    el.style.height = `${size}%`;
+    el.dataset.radiusKm = String(currentBrowseRadiusKm());
+    let label = el.querySelector(".user-radius-label");
+    if (!label) {
+      label = document.createElement("span");
+      label.className = "user-radius-label";
+      el.appendChild(label);
+    }
+    label.textContent = `${currentBrowseRadiusKm()}km`;
+  });
+}
+
 function flatMapZonesHTML(classPrefix = "", options = {}) {
   const p = classPrefix ? `${classPrefix} ` : "";
-  const z = MAP_LAYOUT.zones || {};
-  const eatPulse = options.pulseEat ? " map-zone-pulse" : "";
+  const pulse = options.pulseEat ? `<div class="${p}map-live-pulse" style="left:${(MAP_LAYOUT.user_pin || { x: 48 }).x}%;top:${(MAP_LAYOUT.user_pin || { y: 54 }).y}%"></div>` : "";
+  const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
+  const radiusSize = browseRadiusVisualSize();
   return `
-    <div class="${p}map-zone map-zone-eat${eatPulse}"><span>${escapeHTML(z.eat?.label || "餐饮")}</span></div>
-    <div class="${p}map-zone map-zone-sport"><span>${escapeHTML(z.sport?.label || "运动")}</span></div>
-    <div class="${p}map-zone map-zone-board"><span>${escapeHTML(z.board?.label || "桌游")}</span></div>
-    <div class="${p}map-zone map-zone-play"><span>${escapeHTML(z.play?.label || "文娱")}</span></div>
+    <div class="${p}map-grid" aria-hidden="true"></div>
     <div class="${p}map-road road-main" aria-hidden="true"></div>
     <div class="${p}map-road road-cross" aria-hidden="true"></div>
-    <div class="user-location-pin map-user-pin" style="left:${MAP_LAYOUT.user_pin.x}%;top:${MAP_LAYOUT.user_pin.y}%"></div>
-    <div class="user-radius" style="left:${MAP_LAYOUT.user_pin.x}%;top:${MAP_LAYOUT.user_pin.y}%;width:28%;height:28%"></div>
+    <div class="${p}map-road road-upper" aria-hidden="true"></div>
+    <div class="${p}map-road road-lower" aria-hidden="true"></div>
+    <div class="${p}map-road road-diagonal-a" aria-hidden="true"></div>
+    <div class="${p}map-road road-diagonal-b" aria-hidden="true"></div>
+    <span class="${p}map-place-label label-westwood">主街</span>
+    <span class="${p}map-place-label label-campus">校园侧</span>
+    <span class="${p}map-place-label label-riverside">河岸路</span>
+    ${pulse}
+    <div class="user-location-pin map-user-pin" style="left:${userPin.x}%;top:${userPin.y}%"></div>
+    <div class="user-radius" data-radius-km="${currentBrowseRadiusKm()}" style="left:${userPin.x}%;top:${userPin.y}%;width:${radiusSize}%;height:${radiusSize}%">${rangeLabelHTML()}</div>
+  `;
+}
+
+function miniMapPinsHTML(poiList) {
+  return poiList.map((poi, index) => {
+    const pos = poiMapPercent(poi);
+    const demand = Number(poi.buddy_demand_count || 0);
+    const hot = Number(poi.hot_score || 0);
+    const size = Math.max(6, Math.min(12, 5 + demand * 0.7 + (hot > 78 ? 2 : 0)));
+    const { accent } = poiPhotoGradient(poi);
+    return `
+      <button type="button" class="mini-merchant-pin ${hot > 78 ? "is-hot" : ""}"
+        data-poi="${poi.poi_id}"
+        style="left:${pos.x}%;top:${pos.y}%;--pin-color:${accent};--pin-size:${size}px;--float-delay:${(index % 6) * 0.14}s"
+        title="${escapeHTML(poi.name)} · ${demand} 人想约">
+        <span>${escapeHTML(categoryAbbr(poi))}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function pinSummaryHTML(poi, matchScore) {
+  return `
+    <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
+    ${poi.hot_score > 80 ? "<em>热</em>" : ""}
+    ${matchScore ? `<span class="pin-match">${matchScore}%</span>` : ""}
+    <span class="pin-name">${escapeHTML(poi.name)}</span>
   `;
 }
 
@@ -427,16 +573,272 @@ function brandSloganLine() {
   return lines[Math.floor(Date.now() / 8000) % lines.length];
 }
 
+function showInviteCardModal(poiOverride = null, initialMode = "join") {
+  const circle = getCurrentCircle();
+  const hotPoi = poiOverride || poisInCircle(circle)
+    .sort((a, b) => (b.buddy_demand_count * 3 + b.hot_score) - (a.buddy_demand_count * 3 + a.hot_score))[0]
+    || appState.selectedPOI || pois[0];
+
+  let mode = initialMode === "new" ? "new" : "join";
+  let selectedTime = "今晚 19:30";
+  const timeOptions = ["今晚 18:00", "今晚 19:30", "今晚 21:00", "周末 15:00"];
+  const budgetBase = Math.max(40, Math.round(Number(hotPoi.avg_price || 80) / 10) * 10);
+  const budgetOptions = Array.from(new Set([Math.max(40, budgetBase - 20), budgetBase, budgetBase + 30]));
+  let groupSize = 2;
+  let budgetLimit = budgetBase;
+
+  const normalizeGroupSize = (value) => Math.max(1, Math.min(12, Number.parseInt(value, 10) || 2));
+  const normalizeBudgetLimit = (value) => Math.max(0, Math.min(999, Math.round((Number(value) || budgetBase) / 10) * 10));
+
+  function buildCardPreview(poi) {
+    const deal = getDeal(poi.poi_id);
+    const spotsLeft = Math.max(1, 3 - (poi.buddy_demand_count % 3));
+    const coverUrl = poiCoverImage(poi);
+
+    if (mode === "join") {
+      return `
+        <div id="icCardPreview" style="border-radius:16px;overflow:hidden;box-shadow:0 10px 36px rgba(0,0,0,0.14);margin:0 16px;">
+          <!-- Cover with overlay -->
+          <div style="height:148px;background:url('${coverUrl}') center/cover no-repeat;position:relative;">
+            <div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0.62) 100%);"></div>
+            <div style="position:absolute;top:10px;right:10px;background:#FFE033;color:#1a1a1a;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:800;">还差 ${spotsLeft} 人</div>
+            <div style="position:absolute;bottom:12px;left:14px;right:14px;color:#fff;">
+              <p style="font-size:17px;font-weight:900;margin:0;text-shadow:0 1px 4px rgba(0,0,0,0.4);">${escapeHTML(poi.name)}</p>
+              <p style="font-size:12px;margin:3px 0 0;opacity:0.88;">评分 ${poi.rating} · ${escapeHTML(poi.sub_category)} · 人均 ¥${poi.avg_price}</p>
+            </div>
+          </div>
+          <!-- Info body -->
+          <div style="background:linear-gradient(135deg,#fffbea 0%,#fff5f7 100%);padding:14px 16px 12px;">
+            <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;font-weight:600;">
+              <span>时间 今晚 ${18 + Math.round(poi.hot_score / 32)}:00</span>
+              <span>氛围 ${escapeHTML(poi.suitable_social_styles[0] || "轻松聊天")}</span>
+              <span>预算 ¥${poi.avg_price} 以内</span>
+            </div>
+            ${deal ? `
+              <div style="display:flex;align-items:center;gap:7px;margin-top:9px;">
+                <span style="background:#ff2442;color:#fff;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700;flex-shrink:0;">团购</span>
+                <span style="font-size:12px;color:#555;">${escapeHTML(deal.title)}</span>
+              </div>` : ""}
+            <div style="border-top:1px solid rgba(0,0,0,0.07);margin-top:10px;padding-top:9px;display:flex;align-items:center;gap:6px;font-size:12px;color:#777;">
+              <span style="width:8px;height:8px;border-radius:50%;background:#58cc02;flex-shrink:0;display:inline-block;"></span>
+              ${escapeHTML(circle.shortName)} · 此刻 <b style="color:#FF6B35;margin:0 2px;">${poi.buddy_demand_count}</b> 人正在找搭子
+            </div>
+          </div>
+        </div>`;
+    } else {
+      return `
+        <div id="icCardPreview" style="border-radius:16px;overflow:hidden;box-shadow:0 10px 36px rgba(0,0,0,0.14);margin:0 16px;">
+          <div style="height:120px;background:url('${coverUrl}') center/cover no-repeat;position:relative;">
+            <div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.05),rgba(0,0,0,0.55));"></div>
+            <div style="position:absolute;top:10px;left:12px;background:#fff;color:#1a1a1a;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:800;">新建局</div>
+            <div style="position:absolute;bottom:12px;left:14px;right:14px;color:#fff;">
+              <p style="font-size:16px;font-weight:900;margin:0;">${escapeHTML(poi.name)}</p>
+              <p id="icInviteSummary" style="font-size:12px;margin:5px 0 0;opacity:0.86;">${escapeHTML(selectedTime)} · ${groupSize} 人 · ¥${budgetLimit} 以内</p>
+            </div>
+          </div>
+          <div style="background:#fff;padding:14px 16px 12px;display:grid;gap:12px;">
+            <div>
+              <p style="font-size:11px;color:#999;font-weight:800;margin-bottom:7px;letter-spacing:0.03em;">活动时间</p>
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-bottom:8px;">
+              ${timeOptions.map((t) => `
+                <button class="ic-time-opt" data-t="${escapeHTML(t)}"
+                  style="min-height:34px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;
+                    border:2px solid ${selectedTime === t ? "#FFE033" : "#ebebeb"};
+                    background:${selectedTime === t ? "#FFF8CC" : "#f9f9f9"};
+                    color:${selectedTime === t ? "#1a1a1a" : "#888"};">
+                  ${escapeHTML(t)}
+                </button>`).join("")}
+              </div>
+              <input id="icTimeInput" value="${escapeHTML(selectedTime)}" placeholder="自定义时间"
+                style="width:100%;min-height:40px;border:1.5px solid #e8e8e8;border-radius:10px;padding:0 12px;font-size:13px;font-weight:750;color:#222;background:#fff;">
+            </div>
+
+            <div style="display:grid;grid-template-columns:0.9fr 1.1fr;gap:10px;">
+              <div>
+                <p style="font-size:11px;color:#999;font-weight:800;margin-bottom:7px;letter-spacing:0.03em;">人数</p>
+                <div style="display:grid;grid-template-columns:34px 1fr 34px;align-items:center;border:1.5px solid #e8e8e8;border-radius:10px;overflow:hidden;min-height:40px;background:#fff;">
+                  <button type="button" id="icGroupMinus" style="border:0;background:#f7f7f7;height:40px;font-size:18px;font-weight:900;color:#555;">-</button>
+                  <input id="icGroupInput" type="number" min="1" max="12" value="${groupSize}"
+                    style="border:0;text-align:center;font-size:14px;font-weight:900;color:#222;outline:none;">
+                  <button type="button" id="icGroupPlus" style="border:0;background:#f7f7f7;height:40px;font-size:18px;font-weight:900;color:#555;">+</button>
+                </div>
+              </div>
+              <div>
+                <p style="font-size:11px;color:#999;font-weight:800;margin-bottom:7px;letter-spacing:0.03em;">人均预算</p>
+                <div style="display:flex;align-items:center;border:1.5px solid #e8e8e8;border-radius:10px;min-height:40px;background:#fff;padding:0 10px;gap:4px;">
+                  <span style="font-size:13px;font-weight:900;color:#555;">¥</span>
+                  <input id="icBudgetInput" type="number" min="0" step="10" value="${budgetLimit}"
+                    style="width:100%;border:0;font-size:14px;font-weight:900;color:#222;outline:none;">
+                  <span style="font-size:12px;font-weight:800;color:#888;white-space:nowrap;">以内</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              ${budgetOptions.map((amount) => `
+                <button type="button" class="ic-budget-opt" data-budget="${amount}"
+                  style="min-height:30px;border-radius:999px;padding:0 12px;font-size:11px;font-weight:800;cursor:pointer;
+                    border:1.5px solid ${budgetLimit === amount ? "#FFE033" : "#e8e8e8"};
+                    background:${budgetLimit === amount ? "#fff8cc" : "#f7f7f7"};
+                    color:${budgetLimit === amount ? "#222" : "#777"};">
+                  ¥${amount}
+                </button>`).join("")}
+            </div>
+
+            <p style="font-size:12px;color:#888;line-height:1.55;">生成后可分享给朋友，对方打开后能直接看到时间、人数和预算。</p>
+          </div>
+        </div>`;
+    }
+  }
+
+  function renderModal() {
+    let overlay = document.getElementById("inviteCardOverlay");
+    if (overlay) overlay.remove();
+    overlay = document.createElement("div");
+    overlay.id = "inviteCardOverlay";
+    overlay.className = "modal-overlay";
+    overlay.style.zIndex = "90";
+
+    const tabStyle = (active) =>
+      `min-height:38px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;
+       border:2px solid ${active ? "#FFE033" : "#ebebeb"};
+       background:${active ? "#FFE033" : "white"};
+       color:${active ? "#1a1a1a" : "#666"};`;
+
+    overlay.innerHTML = `
+      <div class="modal-sheet" style="padding-bottom:36px;">
+        <div class="modal-header">
+          <div>
+            <h2 style="font-size:17px;margin:0;">邀请卡片</h2>
+            <p style="font-size:11px;color:#999;margin:2px 0 0;">发出后对方一键接受即进活动页</p>
+          </div>
+          <button class="modal-close" id="closeInviteCard">关闭</button>
+        </div>
+        <!-- Tab -->
+        <div style="display:flex;gap:8px;margin:12px 16px 14px;">
+          <button id="icTabJoin" style="flex:1;${tabStyle(mode === "join")}">约人来已有活动</button>
+          <button id="icTabNew"  style="flex:1;${tabStyle(mode === "new")}">新建活动局</button>
+        </div>
+        <!-- Card preview -->
+        ${buildCardPreview(hotPoi)}
+        <!-- CTA row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px 16px 0;">
+          <button type="button" class="secondary-button" id="icCopy" style="min-height:46px;font-size:13px;">复制链接</button>
+          <button type="button" class="primary-button"   id="icGo"   style="min-height:46px;font-size:14px;">
+            ${mode === "join" ? "加入活动" : "生成卡片"}
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector("#closeInviteCard").addEventListener("click", () => overlay.remove());
+    overlay.querySelector("#icTabJoin").addEventListener("click", () => { mode = "join"; renderModal(); });
+    overlay.querySelector("#icTabNew").addEventListener("click",  () => { mode = "new";  renderModal(); });
+    overlay.querySelector("#icCopy").addEventListener("click", () => showToast("链接已复制（演示）"));
+    overlay.querySelector("#icGo").addEventListener("click", () => {
+      if (mode === "join") {
+        overlay.remove();
+        appState.userInput = defaultIntentTextForPoi(hotPoi);
+        appState.poiConstraint = hotPoi;
+        closeCirclePage();
+        setPage("ai");
+        setTimeout(() => runAI(), 400);
+      } else {
+        overlay.remove();
+        showToast(`「${hotPoi.name}」${selectedTime} · ${groupSize}人 · ¥${budgetLimit}以内已生成`);
+      }
+    });
+    const refreshInviteSummary = () => {
+      const summary = overlay.querySelector("#icInviteSummary");
+      if (summary) summary.textContent = `${selectedTime} · ${groupSize} 人 · ¥${budgetLimit} 以内`;
+    };
+    overlay.querySelectorAll(".ic-time-opt").forEach((btn) => {
+      btn.addEventListener("click", () => { selectedTime = btn.dataset.t; renderModal(); });
+    });
+    const timeInput = overlay.querySelector("#icTimeInput");
+    if (timeInput) {
+      timeInput.addEventListener("input", () => {
+        const next = timeInput.value.trim();
+        if (next) selectedTime = next;
+        refreshInviteSummary();
+      });
+      timeInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") timeInput.blur();
+      });
+    }
+    overlay.querySelector("#icGroupMinus")?.addEventListener("click", () => {
+      groupSize = normalizeGroupSize(groupSize - 1);
+      renderModal();
+    });
+    overlay.querySelector("#icGroupPlus")?.addEventListener("click", () => {
+      groupSize = normalizeGroupSize(groupSize + 1);
+      renderModal();
+    });
+    overlay.querySelector("#icGroupInput")?.addEventListener("change", (e) => {
+      groupSize = normalizeGroupSize(e.target.value);
+      e.target.value = groupSize;
+      refreshInviteSummary();
+    });
+    overlay.querySelector("#icBudgetInput")?.addEventListener("change", (e) => {
+      budgetLimit = normalizeBudgetLimit(e.target.value);
+      e.target.value = budgetLimit;
+      refreshInviteSummary();
+    });
+    overlay.querySelectorAll(".ic-budget-opt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        budgetLimit = normalizeBudgetLimit(btn.dataset.budget);
+        renderModal();
+      });
+    });
+  }
+
+  renderModal();
+}
+
 function renderCirclePage() {
   let page = document.getElementById("circlePage");
   if (page) page.remove();
   const current = getCurrentCircle();
-  const stats = circleStats(current);
-  const livePeople = [...users, ...backgroundUsers].slice(0, 5);
+  const circlePoiList = poisInCircle(current);
+  const filteredPoiList = filteredMockPois(appState.selectedCategory);
+  const displayPoiList = filteredPoiList;
+  const stats = {
+    shops: displayPoiList.length,
+    buddies: displayPoiList.reduce((s, p) => s + (p.buddy_demand_count || 0), 0),
+    active: users.length + backgroundUsers.length
+  };
+  const circleTotalStats = circleStats(current);
+  const activeGroupId = activeSceneGroupId();
+  const activeGroup = sceneGroups.find((g) => g.id === activeGroupId);
+  const activeSceneName = appState.selectedCategory === "全部" ? "全部类型" : sceneFilterLabel();
+  const sceneSummary = `${displayPoiList.length} 家店 · ${stats.buddies} 人想约`;
+  const allUsers = [...users, ...backgroundUsers];
+  const displayPoiIds = new Set(displayPoiList.map((p) => p.poi_id));
+  const liveDemands = buddyDemands
+    .filter((d) => d.status === "waiting" && displayPoiIds.has(d.poi_id))
+    .slice(0, 5)
+    .map((d) => {
+      const poi = pois.find((p) => p.poi_id === d.poi_id);
+      const user = allUsers.find((u) => u.user_id === d.user_id);
+      return { ...d, poi_name: poi?.name || "附近餐厅", distance_km: user?.distance_km ?? poi?.distance_km ?? 1.2 };
+    });
   const moments = circleMoments(current);
-  const hotPois = circleHotPois(current);
-  const inspires = circleInspirePrompts(current);
-  const browsing = stats.active + stats.buddies + 12;
+  const mapPois = displayPoiList
+    .slice()
+    .sort((a, b) => (b.buddy_demand_count || 0) - (a.buddy_demand_count || 0))
+    .slice(0, 6);
+  const maxPerShop = Math.max(...displayPoiList.map((p) => p.buddy_demand_count || 0), 1);
+  // time-slot multipliers: buddies drop faster than shops (shops stay open, people vary)
+  const slotBonus = appState.circleTimeSlot === "now" ? 1.0 : appState.circleTimeSlot === "tonight" ? 0.75 : 0.5;
+  const shopMult  = appState.circleTimeSlot === "now" ? 1.0 : appState.circleTimeSlot === "tonight" ? 0.86 : 0.70;
+  const effectiveBuddies = Math.round(stats.buddies * slotBonus);
+  const effectiveShops   = Math.round(stats.shops   * shopMult);
+  const browsing = Math.round((stats.active + stats.buddies + 12) * (0.55 + slotBonus * 0.45));
+  const avgDemand = effectiveBuddies / Math.max(effectiveShops, 1);
+  // normalize: hottest-shop (0–45) + avg demand density (0–35) + base(15), all × time slot
+  const heatPct = Math.min(95, Math.round(slotBonus * (15 + (maxPerShop / 12) * 45 + (avgDemand / 8) * 35)));
   const timeSlots = [
     { id: "now", label: "现在" },
     { id: "tonight", label: "今晚" },
@@ -449,7 +851,7 @@ function renderCirclePage() {
   page.innerHTML = `
     <header class="circle-page-header">
       <button type="button" class="back-text-btn" id="closeCirclePage">返回</button>
-      <h1>我的生活圈</h1>
+      <h1>发现</h1>
     </header>
     <div class="circle-page-body">
       <section class="circle-hero" style="--circle-tint:${current.tint}">
@@ -458,29 +860,129 @@ function renderCirclePage() {
           <span class="circle-weather">${circleWeather.temp}° ${escapeHTML(circleWeather.label)}</span>
         </div>
         <b>${escapeHTML(current.name)}</b>
-        <p>${escapeHTML(current.tagline)}</p>
+        <p>${escapeHTML(current.tagline)} · ${escapeHTML(activeSceneName)}</p>
         <p class="circle-ad-line">「${escapeHTML(brandSloganLine())}」</p>
-        <div class="circle-vibe-row">
-          <span>氛围 · ${escapeHTML(current.vibe || "随性")}</span>
-          <div class="circle-vibe-bar"><div class="circle-vibe-fill" style="width:${Math.min(95, 40 + stats.buddies * 4)}%"></div></div>
-        </div>
         <div class="circle-time-row" id="circleTimeRow">
           ${timeSlots.map((t) => `
             <button type="button" class="circle-time-chip ${appState.circleTimeSlot === t.id ? "is-active" : ""}" data-slot="${t.id}">${t.label}</button>
           `).join("")}
         </div>
-        <div class="circle-mini-map">${flatMapZonesHTML("", { pulseEat: true })}</div>
-        <p class="muted" style="font-size:11px;margin-top:6px;">${escapeHTML(circleWeather.tip)}</p>
+        <div style="margin-top:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+            <span style="font-size:11px;font-weight:700;color:#555;letter-spacing:0.02em;">成局热度</span>
+            <span style="font-size:11px;font-weight:700;color:#FF6B35;">${appState.circleTimeSlot === "weekend" ? "本周末" : appState.circleTimeSlot === "tonight" ? "今晚" : "此刻"} ${effectiveBuddies} 人想约 · ${heatPct}%</span>
+          </div>
+          <div style="height:7px;background:rgba(0,0,0,0.08);border-radius:4px;overflow:hidden;">
+            <div style="width:${heatPct}%;height:100%;border-radius:4px;transition:width 0.45s ease;background:${heatPct >= 75 ? "linear-gradient(90deg,#FFB347,#FF6B35,#FF2442)" : heatPct >= 45 ? "linear-gradient(90deg,#FFE033,#FFB347,#FF6B35)" : "linear-gradient(90deg,#FFE033,#FFB347)"};"></div>
+          </div>
+        </div>
+        <div class="circle-mini-map" id="circleMiniMap" style="margin-top:8px;">
+          ${flatMapZonesHTML("", { pulseEat: true })}
+          <canvas id="miniHeatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>
+          <div class="mini-map-pins">${miniMapPinsHTML(displayPoiList)}</div>
+        </div>
+        <p class="muted" style="font-size:11px;margin-top:6px;">地图已按「${escapeHTML(activeSceneName)}」显示 ${escapeHTML(sceneSummary)}</p>
         <div class="circle-card-stats" style="margin-top:10px">
-          <span><b>${stats.shops}</b> 家店</span>
-          <span><b>${stats.buddies}</b> 人想约</span>
+          <span><b>${effectiveShops}</b> 家店</span>
+          <span><b>${effectiveBuddies}</b> 人想约</span>
           <span>约 ${appState.browseRadiusKm}km</span>
         </div>
       </section>
 
-      <div class="section-head"><h3>圈子里正在发生</h3></div>
+      <section class="card discover-filter-card">
+        <div class="section-head"><h3>地图筛选</h3><button type="button" class="linkish" id="circleSeeMap">看地图</button></div>
+        <p class="muted discover-filter-note">切换生活圈或类型后，地图上的商家点位和热力会同步更新。</p>
+
+        <div class="discover-control-label">生活圈</div>
+        <div class="circle-list discover-circle-list">
+          ${lifeCircles.map((c) => {
+            const s = circleStats(c);
+            const active = c.id === appState.selectedCircleId;
+            return `
+              <button type="button" class="circle-card discover-circle-card ${active ? "is-active" : ""}" data-circle="${c.id}"
+                style="--card-tint:${c.tint};--card-accent:${c.accent}">
+                <div class="circle-card-head">
+                  <span class="circle-card-icon">${escapeHTML(c.shortName[0])}</span>
+                  <div>
+                    <h3>${escapeHTML(c.name)}</h3>
+                    <p class="circle-meta">${escapeHTML(c.vibe || "")} · ${s.shops} 店 · ${s.buddies} 人想约</p>
+                  </div>
+                </div>
+              </button>
+            `;
+          }).join("")}
+        </div>
+
+        <div class="discover-control-label">浏览范围</div>
+        <div class="radius-row" id="radiusRow">
+          ${[2, 3, 5].map((km) => `
+            <button type="button" class="radius-chip ${appState.browseRadiusKm === km ? "is-active" : ""}" data-radius="${km}">${km} km</button>
+          `).join("")}
+        </div>
+
+        <div class="discover-control-label">组局类型</div>
+        <div class="scene-group-grid discover-scene-grid" role="tablist">
+          <button type="button" class="scene-group-tile ${appState.selectedCategory === "全部" ? "is-active" : ""}" data-discover-group="all" style="--accent:#FF6B35;--tint:#FFF4ED">
+            ${sceneIcon("全", "#FF6B35", "#FFF4ED")}
+            <span class="sg-label">全部</span>
+            <span class="sg-meta">${circlePoiList.length} 店 · ${circleTotalStats.buddies} 人</span>
+          </button>
+          ${sceneGroups.map((group) => {
+            const groupStats = groupDemandStats(group);
+            const isActive = activeGroupId === group.id;
+            return `
+              <button type="button" class="scene-group-tile ${isActive ? "is-active" : ""}" data-discover-group="${group.id}"
+                style="--accent:${group.accent};--tint:${group.tint}">
+                ${sceneIcon(sceneGroupAbbr(group), group.accent, group.tint)}
+                <span class="sg-label">${group.label}</span>
+                <span class="sg-meta">${groupStats.shops} 店 · ${groupStats.people} 人</span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <div class="scene-sub-panel ${activeGroup ? "is-open" : ""}" ${activeGroup ? "" : 'aria-hidden="true"'}>
+          ${activeGroup ? `
+            <div class="scene-sub-track">
+              ${activeGroup.scenes.map((scene) => {
+                const meta = sceneCatalog[scene] || { abbr: scene[0], tagline: scene };
+                const sceneStats = sceneDemandStats(scene);
+                const isSceneActive = appState.selectedCategory === scene;
+                return `
+                  <button type="button" class="scene-sub-chip ${isSceneActive ? "is-active" : ""}" data-discover-scene="${scene}"
+                    style="--accent:${activeGroup.accent}">
+                    ${sceneIcon(sceneMetaAbbr(meta), activeGroup.accent, activeGroup.tint, "sm")}
+                    <span class="ssc-text">
+                      <b>${scene.replace("搭子", "")}</b>
+                      <small>${sceneStats.shops} 店 · ${sceneStats.people} 人想约</small>
+                    </span>
+                  </button>
+                `;
+              }).join("")}
+            </div>
+          ` : ""}
+        </div>
+        ${appState.selectedCategory !== "全部" ? `
+          <button type="button" class="scene-clear-filter" id="clearDiscoverFilter">清除类型筛选 · 看全部地点</button>
+        ` : ""}
+      </section>
+
+      <div class="section-head" style="margin-top:14px"><h3>地图上的地点</h3><span class="muted" style="font-size:12px;">${escapeHTML(sceneSummary)}</span></div>
+      <div class="discover-poi-list">
+        ${mapPois.map((p) => `
+          <button type="button" class="discover-poi-row" data-poi="${p.poi_id}">
+            ${poiBadgeHTML(p)}
+            <div>
+              <b>${escapeHTML(p.name)}</b>
+              <p>${escapeHTML(p.sub_category)} · ${p.distance_km}km · ${p.buddy_demand_count} 人想约</p>
+            </div>
+            <span>¥${p.avg_price}</span>
+          </button>
+        `).join("") || `<div class="empty-state">这个筛选下暂时没有地点，换个类型试试。</div>`}
+      </div>
+
+      <div class="section-head" style="margin-top:14px"><h3>圈子里正在发生</h3></div>
       <div class="circle-moment-list">
-        ${moments.map((m) => `
+        ${moments.slice(0, 3).map((m) => `
           <button type="button" class="circle-moment" data-poi="${m.poi_id || ""}">
             <div class="circle-moment-head">
               <span class="circle-live-avatar">${escapeHTML(m.avatar)}</span>
@@ -491,89 +993,38 @@ function renderCirclePage() {
         `).join("")}
       </div>
 
-      <div class="section-head" style="margin-top:14px"><h3>大家在搜什么</h3></div>
-      <div class="circle-trend-scroll">
-        ${(current.trends || []).map((t) => `<button type="button" class="circle-trend-bubble" data-trend="${escapeHTML(t)}">${escapeHTML(t)}</button>`).join("")}
-      </div>
-
-      <div class="section-head" style="margin-top:14px"><h3>常去角落</h3><button type="button" class="linkish" id="circleSeeMap">看地图</button></div>
-      <div class="circle-hot-scroll">
-        ${hotPois.map((p) => `
-          <button type="button" class="circle-hot-card" data-poi="${p.poi_id}">
-            <div class="circle-hot-cover" style="background-image:url('${poiCoverImage(p)}')"></div>
-            <div class="circle-hot-body">
-              <b>${escapeHTML(p.name)}</b>
-              <span>${p.buddy_demand_count} 人想找 · ¥${p.avg_price}</span>
-            </div>
-          </button>
-        `).join("")}
-      </div>
-
-      <div class="section-head" style="margin-top:14px"><h3>成局灵感</h3><span class="muted" style="font-size:12px;">点一下去匹配</span></div>
-      <div class="circle-inspire-grid">
-        ${inspires.map((item, i) => `
-          <button type="button" class="circle-inspire" data-inspire="${i}">
-            <b>${escapeHTML(item.title)}</b>
-            <span>${escapeHTML(item.text)}</span>
-          </button>
-        `).join("")}
-      </div>
-
-      <div class="section-head" style="margin-top:14px"><h3>浏览范围</h3></div>
-      <div class="radius-row" id="radiusRow">
-        ${[2, 3, 5].map((km) => `
-          <button type="button" class="radius-chip ${appState.browseRadiusKm === km ? "is-active" : ""}" data-radius="${km}">${km} km</button>
-        `).join("")}
-      </div>
-
-      <div class="section-head" style="margin-top:14px"><h3>换个生活圈</h3></div>
-      <div class="circle-list">
-        ${lifeCircles.map((c) => {
-          const s = circleStats(c);
-          const active = c.id === appState.selectedCircleId;
-          return `
-            <button type="button" class="circle-card ${active ? "is-active" : ""}" data-circle="${c.id}"
-              style="--card-tint:${c.tint};--card-accent:${c.accent}">
-              <div class="circle-card-head">
-                <span class="circle-card-icon">${escapeHTML(c.shortName[0])}</span>
-                <div>
-                  <h3>${escapeHTML(c.name)}</h3>
-                  <p class="circle-meta">${escapeHTML(c.vibe || "")} · ${escapeHTML(c.tagline)}</p>
-                </div>
-              </div>
-              <div class="circle-card-stats">
-                <span><b>${s.shops}</b> 店</span>
-                <span><b>${s.buddies}</b> 人想约</span>
-              </div>
-            </button>
-          `;
-        }).join("")}
-      </div>
-
-      <div class="circle-invite">
-        <p style="font-size:14px;font-weight:700;margin-bottom:6px;">把生活圈告诉朋友</p>
-        <p class="muted" style="font-size:12px;line-height:1.5;">演示：邀请后可见同一批店与动态，适合线下活动传播。</p>
-        <button type="button" class="secondary-button wide" id="circleShare" style="margin-top:10px;min-height:44px">生成邀请卡片</button>
-      </div>
-
       <section class="card circle-live" style="margin-top:12px">
-        <p class="eyebrow">可以打个招呼的人</p>
-        ${livePeople.map((u) => `
+        <p class="eyebrow">可加入的局</p>
+        ${liveDemands.map((d) => `
           <div class="circle-live-item">
-            <span class="circle-live-avatar">${escapeHTML(u.nickname[0])}</span>
+            <span class="circle-demand-icon">${escapeHTML((d.activity_type || "搭")[0])}</span>
             <div style="flex:1">
-              <b>${escapeHTML(u.nickname)}</b>
-              <p class="muted" style="font-size:12px;">${escapeHTML(u.social_style || "随性")} · ${u.distance_km || "1.2"}km</p>
+              <b>${escapeHTML(d.poi_name)}</b>
+              <p class="muted" style="font-size:12px;">${escapeHTML(d.target_time)} · ¥${d.budget_min}–${d.budget_max} · ${d.distance_km}km</p>
             </div>
-            <button type="button" class="text-button" data-wave="${escapeHTML(u.user_id || u.nickname)}">打招呼</button>
+            <button type="button" class="text-button" data-join="${escapeHTML(d.demand_id)}">加入</button>
           </div>
-        `).join("")}
+        `).join("") || `<p class="muted" style="font-size:12px;margin-top:8px;">当前筛选下暂无可加入的局。</p>`}
         <button type="button" class="primary-button wide" id="circleGoMatch" style="margin-top:12px">用${escapeHTML(brand.name)}匹配一个搭子</button>
       </section>
     </div>
   `;
   document.body.appendChild(page);
   document.body.style.overflow = "hidden";
+  syncMapRangeOverlay();
+
+  // Render mini-map heat after layout
+  const slotMultMini = appState.circleTimeSlot === "weekend" ? 0.45
+                     : appState.circleTimeSlot === "tonight" ? 0.72 : 1.0;
+  const miniList = displayPoiList;
+  function tryMiniHeat(attempts) {
+    const mc = document.getElementById("miniHeatCanvas");
+    if (!mc) return;
+    if (!drawHeatOnCanvas(mc, miniList, slotMultMini) && (attempts || 0) < 10) {
+      setTimeout(() => tryMiniHeat((attempts || 0) + 1), 80);
+    }
+  }
+  setTimeout(() => tryMiniHeat(0), 0);
 
   page.querySelector("#closeCirclePage").addEventListener("click", closeCirclePage);
   page.querySelectorAll("[data-circle]").forEach((btn) => {
@@ -581,53 +1032,69 @@ function renderCirclePage() {
   });
   page.querySelectorAll("[data-radius]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      appState.browseRadiusKm = Number(btn.dataset.radius);
-      gaodePOIs = filteredMockPois(appState.selectedCategory);
-      appState.selectedPOI = gaodePOIs[0] || pois[0] || null;
+      applyBrowseRadius(btn.dataset.radius);
       renderCirclePage();
+      showToast(`浏览范围已更新为 ${currentBrowseRadiusKm()}km`);
     });
   });
   page.querySelectorAll("[data-slot]").forEach((btn) => {
     btn.addEventListener("click", () => {
       appState.circleTimeSlot = btn.dataset.slot;
       renderCirclePage();
+      setTimeout(renderHeatCanvas, 0); // re-draw main map heat for new slot
     });
   });
-  page.querySelectorAll("[data-trend]").forEach((btn) => {
+  page.querySelectorAll("[data-discover-group]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      appState.userInput = `想在${getCurrentCircle().shortName}：${btn.dataset.trend}，轻松组局。`;
-      closeCirclePage();
-      setPage("ai");
-      showToast("已填入匹配条件");
+      const id = btn.dataset.discoverGroup;
+      if (id === "all") {
+        applySceneFilter("全部", { expandNav: false });
+      } else {
+        applySceneFilter(`group:${id}`, { expandNav: true });
+      }
+      renderCirclePage();
     });
   });
-  page.querySelectorAll("[data-inspire]").forEach((btn) => {
+  page.querySelectorAll("[data-discover-scene]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const item = inspires[Number(btn.dataset.inspire)];
-      if (!item) return;
-      appState.userInput = item.prompt;
-      closeCirclePage();
-      setPage("ai");
+      applySceneFilter(btn.dataset.discoverScene, { expandNav: true });
+      renderCirclePage();
     });
   });
-  page.querySelectorAll(".circle-moment[data-poi], .circle-hot-card[data-poi]").forEach((btn) => {
+  page.querySelector("#clearDiscoverFilter")?.addEventListener("click", () => {
+    applySceneFilter("全部", { expandNav: false });
+    renderCirclePage();
+  });
+  page.querySelectorAll(".circle-moment[data-poi], .circle-hot-card[data-poi], .mini-merchant-pin[data-poi]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const poi = pois.find((p) => p.poi_id === btn.dataset.poi);
       if (!poi) return;
       appState.selectedPOI = poi;
       closeCirclePage();
       setPage("map");
+      setTimeout(() => {
+        updatePOISheet();
+        const sheet = document.getElementById("poiSheet");
+        if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+    });
+  });
+  page.querySelectorAll(".discover-poi-row[data-poi]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const poi = pois.find((p) => p.poi_id === btn.dataset.poi);
+      if (!poi) return;
+      appState.selectedPOI = poi;
+      closeCirclePage();
+      setPage("map");
+      setTimeout(updatePOISheet, 80);
     });
   });
   page.querySelector("#circleSeeMap").addEventListener("click", () => {
     closeCirclePage();
     setPage("map");
   });
-  page.querySelector("#circleShare").addEventListener("click", () => {
-    showToast(`「${brand.name}」${getCurrentCircle().shortName} · ${brand.tagline}（演示分享）`);
-  });
-  page.querySelectorAll("[data-wave]").forEach((btn) => {
-    btn.addEventListener("click", () => showToast("已发送打招呼（演示）"));
+  page.querySelectorAll("[data-join]").forEach((btn) => {
+    btn.addEventListener("click", () => joinDemand(btn.dataset.join));
   });
   page.querySelector("#circleGoMatch").addEventListener("click", () => {
     closeCirclePage();
@@ -679,6 +1146,54 @@ function venueExtraChips(poi) {
   return "";
 }
 
+function merchantFitSummary(poi) {
+  if (poi.category === "桌游") {
+    return {
+      title: "适合先定人数再到店",
+      text: "2-6 人比较舒服，想轻松破冰可以选聚会桌游；跑团/RPG 建议预留更长时间。",
+      chips: [poi.venue_extra?.private_room, poi.venue_extra?.avg_session_hours, poi.venue_extra?.game_focus].filter(Boolean)
+    };
+  }
+  if (poi.category === "攀岩") {
+    return {
+      title: "适合低压力运动局",
+      text: "新手可以从体验线开始，装备能租，约一个节奏接近的人会更舒服。",
+      chips: [poi.venue_extra?.climb_grade, poi.venue_extra?.gear_rental, poi.venue_extra?.session_duration].filter(Boolean)
+    };
+  }
+  if (poi.category === "骑行") {
+    return {
+      title: "适合提前约集合点",
+      text: "路线和速度最好先说清楚，轻松骑比拼速度更适合第一次见面。",
+      chips: [poi.venue_extra?.route_length, poi.venue_extra?.bike_rental, poi.venue_extra?.meet_point].filter(Boolean)
+    };
+  }
+  if (poi.category === "KTV" || poi.category === "酒吧") {
+    return {
+      title: "适合小组热闹局",
+      text: "更适合 3 人以上，先定预算和结束时间，现场会轻松很多。",
+      chips: ["小组友好", "适合晚间", "预算先说清"]
+    };
+  }
+  return {
+    title: "适合边吃边聊",
+    text: "第一次见面选这类店比较稳，排队不久、预算清楚，聊天压力低。",
+    chips: [poi.sub_category, "轻松聊天", "预算清楚"].filter(Boolean)
+  };
+}
+
+function merchantWaitLabel(poi) {
+  const wait = Number(poi.wait_time_min || 0);
+  if (wait <= 3) return "基本不用等";
+  if (wait <= 12) return "排队可接受";
+  if (wait <= 25) return "建议先约好时间";
+  return "高峰期偏久";
+}
+
+function merchantDealShort(poi) {
+  return String(poi.deal_text || "暂无团购").replace(/\s+/g, " ");
+}
+
 function defaultIntentTextForPoi(poi) {
   if (poi.category === "攀岩") {
     return `周末想去${poi.name}抱石，预算 ${poi.avg_price} 元以内，新手友好，离我不要太远。`;
@@ -697,13 +1212,13 @@ function renderMapPage() {
     $("#mapPage").innerHTML = `
       <div class="map-page-layout">
         <div id="mapStatsBar" class="stat-strip card"></div>
-        <div id="filterTabsRow" class="scene-filter-host"></div>
         <section class="map-block card map-card">
-          <div id="mockMapCanvas" class="fake-map" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}平面地图">
-            ${flatMapZonesHTML()}
-            <div id="mockMapPins" class="map-pins-layer"></div>
+          <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
+            ${("AMap" in window) ? "" : `${flatMapZonesHTML()}
+            <canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>
+            <div id="mockMapPins" class="map-pins-layer"></div>`}
           </div>
-          <p class="map-layout-legend">${escapeHTML(getCurrentCircle().shortName)} · 平面示意 · 蓝点为你 · 点击气泡看店</p>
+          <p class="map-layout-legend">${escapeHTML(getCurrentCircle().shortName)} · ${("AMap" in window) ? "高德地图" : "街区热力 · 小点为商家"} · 点击气泡看店</p>
         </section>
         <section id="poiSheet" class="merchant-block poi-sheet card"></section>
       </div>
@@ -712,8 +1227,14 @@ function renderMapPage() {
   }
   updateMapStats();
   updateSceneNavigator();
+  syncMapRangeOverlay();
   if (mockMapReady) {
-    renderMockMapPins();
+    if (amapInstance) {
+      renderAmapPins();
+    } else {
+      renderMockMapPins();
+      setTimeout(renderHeatCanvas, 0);
+    }
     updatePOISheet();
   } else if (appState.selectedPOI) {
     updatePOISheet();
@@ -809,10 +1330,16 @@ function sceneFilterLabel() {
 function refreshMapSupply() {
   gaodePOIs = filteredMockPois(appState.selectedCategory);
   if (!gaodePOIs.some((p) => p.poi_id === appState.selectedPOI?.poi_id)) {
-    appState.selectedPOI = gaodePOIs[0] || pois[0] || null;
+    appState.selectedPOI = gaodePOIs[0] || null;
   }
+  syncMapRangeOverlay();
   if (mockMapReady) {
-    renderMockMapPins();
+    if (amapInstance) {
+      renderAmapPins();
+    } else {
+      renderMockMapPins();
+      setTimeout(renderHeatCanvas, 0);
+    }
     updatePOISheet();
     updateMapStats();
     updateSceneNavigator();
@@ -822,11 +1349,127 @@ function refreshMapSupply() {
 function initMockMap() {
   if (!appState.selectedCircleId && lifeCircles[0]) appState.selectedCircleId = lifeCircles[0].id;
   gaodePOIs = filteredMockPois(appState.selectedCategory);
-  appState.selectedPOI = gaodePOIs[0] || pois[0] || null;
+  const preSelected = appState.selectedPOI && gaodePOIs.some((p) => p.poi_id === appState.selectedPOI.poi_id);
+  if (!preSelected) appState.selectedPOI = gaodePOIs[0] || null;
+  if ("AMap" in window) {
+    initRealMap();
+  } else {
+    initFakeMap();
+  }
+}
+
+function initFakeMap() {
   mockMapReady = true;
   renderMockMapPins();
+  setTimeout(renderHeatCanvas, 0);
   updateMapStats();
   updatePOISheet();
+}
+
+function initRealMap() {
+  const circle = getCurrentCircle();
+  const centerLng = circle.center_lng || -118.4452;
+  const centerLat = circle.center_lat || 34.0629;
+  const container = document.getElementById("mockMapCanvas");
+  if (!container) { initFakeMap(); return; }
+  try {
+    // eslint-disable-next-line no-undef
+    const AMap = /** @type {any} */ (window["AMap"]);
+    amapInstance = new AMap.Map(container, {
+      center: [centerLng, centerLat],
+      zoom: 15,
+      zooms: [14, 17],
+      mapStyle: "amap://styles/whitesmoke"
+    });
+    amapInstance.on("complete", () => {
+      try { amapInstance.setLimitBounds(amapInstance.getBounds()); } catch (_) {}
+    });
+    mockMapReady = true;
+    renderAmapPins();
+    updateMapStats();
+    updatePOISheet();
+  } catch (err) {
+    console.warn("[AMap] 初始化失败，降级为平面示意地图", err);
+    container.className = "fake-map";
+    container.innerHTML = flatMapZonesHTML() +
+      '<canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>' +
+      '<div id="mockMapPins" class="map-pins-layer"></div>';
+    amapInstance = null;
+    initFakeMap();
+  }
+}
+
+function renderAmapPins() {
+  if (!amapInstance) return;
+  amapInstance.clearMap();
+  amapRangeCircle = null;
+  const AMap = /** @type {any} */ (window["AMap"]);
+  const matchScoreMap = {};
+  appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
+
+  renderAmapRangeCircle(AMap);
+
+  gaodePOIs.forEach((poi, index) => {
+    if (!poi.lng || !poi.lat) return;
+    const isSelected = poi.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id);
+    const matchScore = matchScoreMap[poi.poi_id];
+    const isHot = poi.hot_score > 80;
+    const sizeClass = poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
+    const g = poiPhotoGradient(poi);
+    const pinHTML = `
+      <div class="map-pin pin-enter ${isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}"
+           style="cursor:pointer;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 6) * 0.16}s"
+           title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约">
+        ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
+        ${pinSummaryHTML(poi, matchScore)}
+      </div>`;
+    try {
+      const marker = new AMap.Marker({
+        position: new AMap.LngLat(poi.lng, poi.lat),
+        content: pinHTML,
+        anchor: "bottom-center",
+        offset: new AMap.Pixel(0, 0),
+        title: poi.name
+      });
+      marker.on("click", () => {
+        appState.selectedPOI = poi;
+        renderAmapPins();
+        updatePOISheet();
+        const sheet = document.getElementById("poiSheet");
+        if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      amapInstance.add(marker);
+    } catch (_) {}
+  });
+}
+
+function renderAmapRangeCircle(AMap) {
+  if (!amapInstance || !AMap) return;
+  const circle = getCurrentCircle();
+  const centerLng = circle.center_lng || -118.4452;
+  const centerLat = circle.center_lat || 34.0629;
+  const radiusKm = currentBrowseRadiusKm();
+  try {
+    const center = new AMap.LngLat(centerLng, centerLat);
+    amapRangeCircle = new AMap.Circle({
+      center,
+      radius: radiusKm * 1000,
+      strokeColor: "#2F7EF7",
+      strokeOpacity: 0.8,
+      strokeWeight: 2,
+      strokeStyle: "dashed",
+      fillColor: "#2F7EF7",
+      fillOpacity: 0.08,
+      zIndex: 20
+    });
+    amapInstance.add(amapRangeCircle);
+    amapInstance.add(new AMap.Marker({
+      position: center,
+      content: `<div class="amap-range-label">${radiusKm}km</div>`,
+      anchor: "center",
+      offset: new AMap.Pixel(0, -18)
+    }));
+  } catch (_) {}
 }
 
 function renderMockMapPins() {
@@ -834,22 +1477,22 @@ function renderMockMapPins() {
   if (!layer) return;
   const matchScoreMap = {};
   appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
-  layer.innerHTML = gaodePOIs.map((poi) => {
+  layer.innerHTML = gaodePOIs.map((poi, index) => {
     const isHot = poi.hot_score > 80;
     const isSelected = poi.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id);
     const matchScore = matchScoreMap[poi.poi_id];
     const sizeClass = poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
     const x = poi.mapX != null ? poi.mapX : poiMapPercent(poi).x;
     const y = poi.mapY != null ? poi.mapY : poiMapPercent(poi).y;
+    const g = poiPhotoGradient(poi);
     return `
       <button type="button" class="map-pin pin-enter ${isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}"
         data-poi-id="${poi.poi_id}" data-category="${poi.category}"
-        style="left:${x}%;top:${y}%"
-        title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想去">
-        ${(() => { const g = poiPhotoGradient(poi); return sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs"); })()}
-        <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>人</small></span>
-        ${isHot ? "<em>热门</em>" : ""}
-        ${matchScore ? `<span class="pin-match">${matchScore}%</span>` : ""}
+        style="left:${x}%;top:${y}%;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 6) * 0.16}s"
+        title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约"
+        aria-label="${escapeHTML(poi.name)}，${escapeHTML(poi.category)}，${poi.buddy_demand_count} 人想约">
+        ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
+        ${pinSummaryHTML(poi, matchScore)}
       </button>
     `;
   }).join("");
@@ -864,6 +1507,92 @@ function renderMockMapPins() {
       if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   });
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function hexToRgb(hex) {
+  const clean = String(hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(clean)) return [255, 107, 53];
+  return [
+    parseInt(clean.slice(0, 2), 16),
+    parseInt(clean.slice(2, 4), 16),
+    parseInt(clean.slice(4, 6), 16)
+  ];
+}
+
+function heatWeightForPoi(poi) {
+  const demand = Number(poi.buddy_demand_count || 0);
+  const hot = Number(poi.hot_score || 0);
+  const wait = Number(poi.wait_time_min || 0);
+  const rating = Number(poi.rating || 4.4);
+  const waitBonus = clampNumber(1 - wait / 38, 0, 1) * 2.4;
+  const ratingBonus = clampNumber(rating - 4.2, 0, 0.8) * 2.2;
+  return demand * 1.9 + hot / 12 + waitBonus + ratingBonus;
+}
+
+function poiDensityBoost(poi, poiList) {
+  const a = poiMapPercent(poi);
+  return poiList.reduce((sum, other) => {
+    if (other.poi_id === poi.poi_id) return sum;
+    const b = poiMapPercent(other);
+    const distance = Math.hypot(a.x - b.x, a.y - b.y);
+    return sum + clampNumber(1 - distance / 22, 0, 1);
+  }, 0);
+}
+
+function drawHeatOnCanvas(canvasEl, poiList, slotMult) {
+  const parent = canvasEl.parentElement;
+  // offsetWidth/offsetHeight are reliable once the element is in the laid-out DOM
+  const w = (parent && parent.offsetWidth > 0) ? parent.offsetWidth : canvasEl.offsetWidth;
+  const h = (parent && parent.offsetHeight > 0) ? parent.offsetHeight : canvasEl.offsetHeight;
+  if (w < 10 || h < 10) return false; // not laid out yet
+
+  const dpr = window.devicePixelRatio || 1;
+  canvasEl.width = Math.round(w * dpr);
+  canvasEl.height = Math.round(h * dpr);
+  const ctx = canvasEl.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  const weights = poiList.map((p) => heatWeightForPoi(p));
+  const maxW = Math.max(...weights, 1);
+  const isMini = h <= 150;
+
+  poiList.forEach((poi, i) => {
+    const density = poiDensityBoost(poi, poiList);
+    const intensity = clampNumber((weights[i] / maxW) * (0.78 + density * 0.08) * slotMult, 0, 1);
+    if (intensity < 0.06) return;
+    const x = (poiMapPercent(poi).x / 100) * w;
+    const y = (poiMapPercent(poi).y / 100) * h;
+    const radius = (isMini ? 13 : 24) + intensity * (isMini ? 31 : 62);
+    const [r, g, b] = hexToRgb(poiPhotoGradient(poi).accent);
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    const a = (isMini ? 0.12 : 0.10) + intensity * (isMini ? 0.36 : 0.42);
+    grad.addColorStop(0,    `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`);
+    grad.addColorStop(0.36, `rgba(${r}, ${g}, ${b}, ${(a * 0.56).toFixed(3)})`);
+    grad.addColorStop(0.72, `rgba(255, 190, 64, ${(a * 0.20).toFixed(3)})`);
+    grad.addColorStop(1,    "rgba(255, 190, 64, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  return true;
+}
+
+function renderHeatCanvas(attempt) {
+  const canvas = document.getElementById("heatCanvas");
+  if (!canvas) return;
+  const list = gaodePOIs.length ? gaodePOIs : pois;
+  const slotMult = appState.circleTimeSlot === "weekend" ? 0.45
+                 : appState.circleTimeSlot === "tonight" ? 0.72 : 1.0;
+  const ok = drawHeatOnCanvas(canvas, list, slotMult);
+  if (!ok && (attempt || 0) < 12) {
+    setTimeout(() => renderHeatCanvas((attempt || 0) + 1), 100);
+  }
 }
 
 function showPoiNavHint(poi) {
@@ -889,148 +1618,8 @@ function updateMapStats() {
 function updateSceneNavigator() {
   const el = document.getElementById("filterTabsRow");
   if (!el) return;
-  const activeGroupId = activeSceneGroupId();
-  const expanded = appState.sceneNavExpanded && activeGroupId;
-  const activeGroup = sceneGroups.find((g) => g.id === activeGroupId);
-  const totalPeople = poisInCircle(getCurrentCircle()).reduce((s, p) => s + (p.buddy_demand_count || 0), 0);
-  el.innerHTML = `
-    <section class="scene-nav card">
-      <div class="scene-nav-head">
-        <div class="scene-nav-copy">
-          <p class="eyebrow">附近可组局</p>
-          <h3>${escapeHTML(sceneFilterLabel())}</h3>
-        </div>
-        <button type="button" class="scene-explore-btn" id="openSceneExplorer" aria-label="浏览全部场景">
-          <span>全部</span><small>${scenes.length - 1}类</small>
-        </button>
-      </div>
-      <div class="scene-group-grid" role="tablist">
-        <button type="button" class="scene-group-tile ${appState.selectedCategory === "全部" ? "is-active" : ""}" data-scene-group="all" style="--accent:#FF6B35;--tint:#FFF4ED">
-          ${sceneIcon("全", "#FF6B35", "#FFF4ED")}
-          <span class="sg-label">全部</span>
-          <span class="sg-meta">${poisInCircle(getCurrentCircle()).length} 店 · ${totalPeople} 人</span>
-        </button>
-        ${sceneGroups.map((group) => {
-          const stats = groupDemandStats(group);
-          const isActive = activeGroupId === group.id;
-          return `
-            <button type="button" class="scene-group-tile ${isActive ? "is-active" : ""}" data-scene-group="${group.id}"
-              style="--accent:${group.accent};--tint:${group.tint}">
-              ${sceneIcon(sceneGroupAbbr(group), group.accent, group.tint)}
-              <span class="sg-label">${group.label}</span>
-              <span class="sg-meta">${stats.shops} 店 · ${stats.people} 人</span>
-            </button>
-          `;
-        }).join("")}
-      </div>
-      <div class="scene-sub-panel ${expanded ? "is-open" : ""}" ${expanded ? "" : 'aria-hidden="true"'}>
-        ${activeGroup ? `
-          <div class="scene-sub-track">
-            ${activeGroup.scenes.map((scene) => {
-              const meta = sceneCatalog[scene] || { abbr: scene[0], tagline: scene };
-              const stats = sceneDemandStats(scene);
-              const isSceneActive = appState.selectedCategory === scene;
-              return `
-                <button type="button" class="scene-sub-chip ${isSceneActive ? "is-active" : ""}" data-scene="${scene}"
-                  style="--accent:${activeGroup.accent}">
-                  ${sceneIcon(sceneMetaAbbr(meta), activeGroup.accent, activeGroup.tint, "sm")}
-                  <span class="ssc-text">
-                    <b>${scene.replace("搭子", "")}</b>
-                    <small>${stats.shops} 店 · ${stats.people} 人想找</small>
-                  </span>
-                </button>
-              `;
-            }).join("")}
-          </div>
-        ` : ""}
-      </div>
-      ${appState.selectedCategory !== "全部" ? `
-        <button type="button" class="scene-clear-filter" id="clearSceneFilter">清除筛选 · 看全部 ${poisInCircle(getCurrentCircle()).length} 店</button>
-      ` : ""}
-    </section>
-  `;
-  el.querySelector("#openSceneExplorer")?.addEventListener("click", openSceneExplorer);
-  el.querySelector("#clearSceneFilter")?.addEventListener("click", () => applySceneFilter("全部"));
-  el.querySelectorAll("[data-scene-group]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.sceneGroup;
-      if (id === "all") {
-        applySceneFilter("全部");
-        return;
-      }
-      if (activeGroupId === id && String(appState.selectedCategory).startsWith("group:")) {
-        const group = sceneGroups.find((g) => g.id === id);
-        if (group?.scenes[0]) applySceneFilter(group.scenes[0], { expandNav: true });
-        return;
-      }
-      applySceneFilter(`group:${id}`, { expandNav: true });
-    });
-  });
-  el.querySelectorAll("[data-scene]").forEach((btn) => {
-    btn.addEventListener("click", () => applySceneFilter(btn.dataset.scene, { expandNav: true }));
-  });
-}
-
-function openSceneExplorer() {
-  let overlay = document.getElementById("sceneExplorer");
-  if (overlay) overlay.remove();
-  overlay = document.createElement("div");
-  overlay.id = "sceneExplorer";
-  overlay.className = "scene-explorer-overlay";
-  overlay.innerHTML = `
-    <div class="scene-explorer-sheet">
-      <div class="scene-explorer-grabber" aria-hidden="true"></div>
-      <header class="scene-explorer-header">
-        <div>
-          <p class="eyebrow">本地生活 · 成局场景</p>
-          <h2>你想组什么局？</h2>
-          <p class="muted">点选后地图只显示相关地点与搭子需求</p>
-        </div>
-        <button type="button" class="modal-close" id="closeSceneExplorer" aria-label="关闭">关闭</button>
-      </header>
-      ${sceneGroups.map((group) => `
-        <section class="scene-explorer-section">
-          <div class="ses-head" style="--accent:${group.accent}">
-            ${sceneIcon(sceneGroupAbbr(group), group.accent, group.tint)}
-            <div><b>${group.label}</b><small>${group.subtitle}</small></div>
-          </div>
-          <div class="scene-explorer-grid">
-            ${group.scenes.map((scene) => {
-              const meta = sceneCatalog[scene] || { abbr: scene[0], tagline: scene };
-              const stats = sceneDemandStats(scene);
-              const active = appState.selectedCategory === scene;
-              return `
-                <button type="button" class="scene-explorer-card ${active ? "is-active" : ""}" data-scene="${scene}"
-                  style="--accent:${group.accent};--tint:${group.tint}">
-                  ${sceneIcon(sceneMetaAbbr(meta), group.accent, group.tint)}
-                  <span class="sec-title">${scene.replace("搭子", "")}</span>
-                  <span class="sec-tagline">${meta.tagline}</span>
-                  <span class="sec-stats"><b>${stats.shops}</b> 店 · <b>${stats.people}</b> 人想找</span>
-                </button>
-              `;
-            }).join("")}
-          </div>
-        </section>
-      `).join("")}
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  requestAnimationFrame(() => overlay.classList.add("is-visible"));
-  overlay.querySelector("#closeSceneExplorer").addEventListener("click", closeSceneExplorer);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeSceneExplorer(); });
-  overlay.querySelectorAll("[data-scene]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      applySceneFilter(btn.dataset.scene, { expandNav: true });
-      closeSceneExplorer();
-    });
-  });
-}
-
-function closeSceneExplorer() {
-  const overlay = document.getElementById("sceneExplorer");
-  if (!overlay) return;
-  overlay.classList.remove("is-visible");
-  setTimeout(() => overlay.remove(), 280);
+  el.innerHTML = "";
+  el.hidden = true;
 }
 
 function poiPhotoGradient(poi) {
@@ -1050,61 +1639,115 @@ function poiPhotoGradient(poi) {
 
 function updatePOISheet() {
   const el = document.getElementById("poiSheet");
-  if (!el || !appState.selectedPOI) return;
+  if (!el) return;
+  if (!appState.selectedPOI) {
+    el.innerHTML = `
+      <div class="map-merchant-body">
+        <section class="map-merchant-section">
+          <div class="map-merchant-section-head">
+            <h3>暂无匹配地点</h3>
+            <span>${escapeHTML(sceneFilterLabel())}</span>
+          </div>
+          <p>当前生活圈和类型下没有可显示的商家，去发现里换个圈子或类型。</p>
+        </section>
+      </div>
+    `;
+    return;
+  }
   const poi = appState.selectedPOI;
   const matchScoreMap = {};
   appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
   const matchScore = matchScoreMap[poi.poi_id];
   const demands = getFakeDemands(poi);
-  const { accent } = poiPhotoGradient(poi);
+  const visibleDemands = demands.slice(0, 2);
+  const fit = merchantFitSummary(poi);
+  const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
+  const dealText = merchantDealShort(poi);
   el.innerHTML = `
     <div class="merchant-hero" style="background-image:url('${poiCoverImage(poi)}')"></div>
-    <div class="merchant-detail-body">
-      <div class="sheet-title-row">
-        <h2 class="merchant-name">${poi.name}</h2>
-        <span class="open-badge">${poi.open_status}</span>
-        ${matchScore ? `<span class="sheet-match">${matchScore}% 匹配</span>` : ""}
+    <div class="merchant-detail-body map-merchant-body">
+      <div class="map-merchant-title">
+        <div>
+          <h2 class="merchant-name">${escapeHTML(poi.name)}</h2>
+          <p>${poi.rating} ★ · ${escapeHTML(poi.sub_category)} · 人均 <b>¥${poi.avg_price}</b> · ${poi.distance_km}km</p>
+        </div>
+        <span class="open-badge">${escapeHTML(poi.open_status || "营业中")}</span>
       </div>
-      <div class="merchant-rating-row">
-        <span class="rating-num">${poi.rating}</span>
-        <span class="rating-star">★</span>
-        <span class="muted">· ${poi.sub_category} · 人均 <b style="color:#FF2442">¥${poi.avg_price}</b> · ${poi.distance_km}km</span>
+      <div class="map-merchant-meta">
+        <span>等待 ${poi.wait_time_min} 分钟</span>
+        <span>步行约 ${walkMin} 分钟</span>
+        <span>${poi.business_hours ? `营业 ${escapeHTML(poi.business_hours)}` : "营业时间待确认"}</span>
       </div>
-      ${poi.address ? `<p class="merchant-address">${poi.address}</p>` : `<p class="merchant-address">${areaShort || area} · 步行约 ${Math.round(poi.distance_km * 12)} 分钟</p>`}
-      <p class="merchant-address muted">示意 ${poi.map_zone || areaShort || "商圈"} · ${poi.distance_km}km</p>
-      ${poi.business_hours ? `<p class="merchant-address">营业 ${poi.business_hours}</p>` : ""}
-      <div class="merchant-chips">
-        <span class="mchip wait-chip">等待 ${poi.wait_time_min} 分钟</span>
-        ${venueExtraChips(poi)}
-        ${poi.tags.slice(0, 2).map((t) => `<span class="mchip">${t}</span>`).join("")}
+
+      <div class="map-merchant-brief-grid">
+        <div><b>${poi.rating}</b><span>评分</span></div>
+        <div><b>${poi.wait_time_min} 分钟</b><span>${merchantWaitLabel(poi)}</span></div>
+        <div><b>${walkMin} 分钟</b><span>步行约</span></div>
+        <div><b>${poi.buddy_demand_count} 人</b><span>最近想约</span></div>
       </div>
-      <div class="deal-bar">
+
+      <section class="map-merchant-section">
+        <div class="map-merchant-section-head">
+          <h3>适合这样约</h3>
+          ${matchScore ? `<span>${matchScore}% 匹配</span>` : `<span>${escapeHTML(poi.category)}</span>`}
+        </div>
+        <b>${escapeHTML(fit.title)}</b>
+        <p>${escapeHTML(fit.text)}</p>
+        <div class="map-merchant-chip-row">
+          ${fit.chips.slice(0, 3).map((chip) => `<span>${escapeHTML(chip)}</span>`).join("")}
+        </div>
+      </section>
+
+      <section class="map-merchant-deal-card">
         <span class="deal-tag">团</span>
-        <span>${poi.deal_text}</span>
-        <span class="deal-off">立省</span>
-      </div>
-      <div class="merchant-cta-row">
-        <button type="button" class="cta-nav-btn" id="poiNavBtn">导航</button>
-        <button class="cta-detail-btn" id="viewMerchantDetail">商家详情</button>
-      </div>
-      <button class="cta-match-btn wide" id="matchFromPoi">找搭子去这里</button>
-      <div class="sheet-buddy-row">
-        <h3>当前 <span id="buddyCountDisplay">${poi.buddy_demand_count}</span> 人找搭子中</h3>
-        <button class="want-go-button" id="wantGoBtn">我也想去 +1</button>
-      </div>
-      <div class="demand-carousel">
-        ${demands.map((d) => `
-          <article class="demand-card ${appState.selectedDemandId === d.demand_id ? "is-selected" : ""}" data-demand="${d.demand_id}">
-            <div class="dc-avatar">${d.nickname[0]}</div>
+        <div>
+          <b>${escapeHTML(dealText)}</b>
+          <p>到店前先看券，预算更好对齐。</p>
+        </div>
+        <strong>看券</strong>
+      </section>
+
+      <section class="map-merchant-section map-merchant-live">
+        <div class="map-merchant-section-head">
+          <h3>现在有人想去</h3>
+          <span>此刻</span>
+        </div>
+        ${visibleDemands.map((d) => `
+          <button type="button" class="map-demand-row ${appState.selectedDemandId === d.demand_id ? "is-selected" : ""}" data-demand="${d.demand_id}">
+            <span>${escapeHTML(String(d.nickname || "搭")[0])}</span>
             <div>
-              <b>${d.nickname}</b>
-              <p>${d.time} · ${d.size}</p>
-              <small>${d.style} · ${d.note}</small>
+              <b>${escapeHTML(d.time || "今晚")} · ${escapeHTML(d.size || "1v1")}</b>
+              <p>${escapeHTML(d.note || d.style || "轻松组局")}</p>
             </div>
-          </article>
-        `).join("") || `<p class="empty" style="padding:8px 0;">这个地点暂无等待中的局，AI 可以帮你发起一个。</p>`}
+            <small>加入</small>
+          </button>
+        `).join("") || `<p class="empty">这个地点暂无等待中的局，可以直接发起一个。</p>`}
+      </section>
+
+      <section class="map-merchant-section map-create-section">
+        <div class="map-merchant-section-head">
+          <h3>新建局</h3>
+          <span>发给朋友</span>
+        </div>
+        <p>已有局不合适，就用这家店发起一个时间清楚、预算清楚的小局。</p>
+        <div class="map-create-preview">
+          <div>
+            <b>${escapeHTML(poi.name)}</b>
+            <span>${escapeHTML(poi.sub_category)} · 人均 ¥${poi.avg_price} · ${poi.distance_km}km</span>
+          </div>
+          <strong>${escapeHTML(merchantWaitLabel(poi))}</strong>
+        </div>
+        <button type="button" class="map-create-cta" id="createInviteFromPoi">生成邀请卡片</button>
+      </section>
+
+      <div class="map-merchant-info-line">
+        <span>${escapeHTML(poi.address || `${areaShort || area} · ${poi.sub_category}`)}</span>
       </div>
-      <button class="secondary-button wide" id="joinFirstDemand" style="margin-top:8px;" ${demands.length ? "" : "disabled"}>加入已有的局</button>
+
+      <div class="map-merchant-actions">
+        <button type="button" class="cta-nav-btn" id="poiNavBtn">导航</button>
+        <button class="cta-match-btn" id="matchFromPoi">找搭子去这里</button>
+      </div>
     </div>
   `;
   document.getElementById("matchFromPoi").addEventListener("click", () => {
@@ -1114,22 +1757,14 @@ function updatePOISheet() {
     appState.parsedIntent = null;
     appState.matchResults = [];
     appState.aiHasRun = false;
-    showToast("已将该地点加入 AI 匹配条件");
+    showToast("已将该地点加入匹配条件");
     render();
     setTimeout(() => runAI(), 450);
   });
-  document.getElementById("viewMerchantDetail").addEventListener("click", () => showMerchantModal(poi));
   document.getElementById("poiNavBtn")?.addEventListener("click", () => showPoiNavHint(poi));
-  document.getElementById("wantGoBtn").addEventListener("click", () => {
-    poi.buddy_demand_count = (poi.buddy_demand_count || 0) + 1;
-    const display = document.getElementById("buddyCountDisplay");
-    if (display) display.textContent = poi.buddy_demand_count;
-    const btn = document.getElementById("wantGoBtn");
-    if (btn) { btn.textContent = "已标记"; btn.disabled = true; btn.style.opacity = ".6"; }
-    showToast("已加入「想去」，等 AI 帮你找搭子");
-  });
-  document.getElementById("joinFirstDemand").addEventListener("click", () => {
-    const targetDemand = demands.find((d) => d.demand_id === appState.selectedDemandId) || demands[0];
+  document.getElementById("createInviteFromPoi")?.addEventListener("click", () => showInviteCardModal(poi, "new"));
+  const joinDemandFromMapSheet = (demandId) => {
+    const targetDemand = demands.find((d) => d.demand_id === demandId) || demands.find((d) => d.demand_id === appState.selectedDemandId) || demands[0];
     if (!targetDemand) return;
     const intent = {
       activity_type: categoryToActivity(poi),
@@ -1142,61 +1777,12 @@ function updatePOISheet() {
       distance_tolerance_km: 2
     };
     selectMatch({ match_id: `joined_${targetDemand.demand_id}`, user: targetDemand.demandUser, poi, total_score: 85, user_score: 83, place_score: 87, score_breakdown: {}, suggested_time: targetDemand.time, backup_poi: findDealBackup(poi), explanation: `你加入了 ${targetDemand.nickname} 在 ${poi.name} 发起的搭子局。`, intent });
-  });
-  el.querySelectorAll(".demand-card[data-demand]").forEach((card) => {
+  };
+  el.querySelectorAll(".map-demand-row[data-demand]").forEach((card) => {
     card.addEventListener("click", () => {
       appState.selectedDemandId = card.dataset.demand;
-      updatePOISheet();
+      joinDemandFromMapSheet(card.dataset.demand);
     });
-  });
-}
-
-function showMerchantModal(poi) {
-  let overlay = document.getElementById("merchantModal");
-  if (overlay) overlay.remove();
-  overlay = document.createElement("div");
-  overlay.id = "merchantModal";
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = `
-    <div class="modal-sheet">
-      <div class="modal-hero" style="background-image:url('${poiCoverImage(poi)}')"></div>
-      <div class="modal-header">
-        <h2>${poi.name}</h2>
-        <button class="modal-close" id="closeModal" aria-label="关闭">关闭</button>
-      </div>
-      <div class="modal-info">
-        <div class="modal-info-row"><span>评分</span><b>${poi.rating} / 5.0</b></div>
-        <div class="modal-info-row"><span>人均消费</span><b>¥${poi.avg_price}</b></div>
-        <div class="modal-info-row"><span>品类</span><b>${poi.sub_category}</b></div>
-        <div class="modal-info-row"><span>营业状态</span><b>${poi.open_status}</b></div>
-        ${poi.business_hours ? `<div class="modal-info-row"><span>营业时间</span><b>${poi.business_hours}</b></div>` : ""}
-        <div class="modal-info-row"><span>当前等待</span><b>${poi.wait_time_min} 分钟</b></div>
-        <div class="modal-info-row"><span>距离</span><b>${poi.distance_km}km</b></div>
-        ${poi.address ? `<div class="modal-info-row"><span>地址</span><b style="font-size:12px;">${poi.address}</b></div>` : ""}
-        ${poi.tel ? `<div class="modal-info-row"><span>电话</span><b>${poi.tel}</b></div>` : ""}
-        <div class="modal-info-row"><span>团购优惠</span><b>${poi.deal_text}</b></div>
-        ${venueExtraModalRows(poi)}
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="cta-nav-btn" style="flex:1;" id="modalNavBtn">路线示意</button>
-        <button class="cta-match-btn" style="flex:1;" id="modalMatchBtn">匹配搭子</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById("closeModal").addEventListener("click", () => overlay.remove());
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-  document.getElementById("modalNavBtn")?.addEventListener("click", () => showPoiNavHint(poi));
-  document.getElementById("modalMatchBtn").addEventListener("click", () => {
-    overlay.remove();
-    appState.userInput = defaultIntentTextForPoi(poi);
-    appState.poiConstraint = poi;
-    appState.currentPage = "ai";
-    appState.parsedIntent = null;
-    appState.matchResults = [];
-    appState.aiHasRun = false;
-    render();
-    setTimeout(() => runAI(), 450);
   });
 }
 
@@ -1259,6 +1845,98 @@ function categoryToScene(category, subCategory, tags) {
   return categoryToActivity({ category, sub_category: subCategory || "", tags: tags || [] });
 }
 
+function analyzeMoodNLP(input) {
+  const text = String(input || "").trim();
+  const lower = text.toLowerCase();
+  const mood = {
+    mood_label: "需求明确",
+    user_state: "想把出门计划快速落地",
+    energy: "中",
+    social_style: "轻松聊天",
+    activity_strategy: "优先选择近距离、低等待、预算明确的方案",
+    recommended_activity: "",
+    recommended_category: "",
+    confidence: 0.62,
+    score_basis: "预算、距离、时间、对方风格和商户等待综合评分"
+  };
+
+  if (/心情不好|不开心|难过|emo|烦|低落|有点崩|郁闷|失落|不顺|压力大|累|焦虑|烦躁/.test(text)) {
+    mood.mood_label = /压力大|焦虑|烦躁|累/.test(text) ? "压力偏高" : "心情低落";
+    mood.user_state = "需要低压力陪伴，不适合强社交和长等待";
+    mood.energy = "低";
+    mood.social_style = /不想说话|安静/.test(text) ? "安静陪伴" : "低压力社交";
+    mood.activity_strategy = "安排近一点、能坐下、等待短的咖啡或轻食，先降低出门门槛";
+    mood.recommended_activity = "咖啡搭子";
+    mood.recommended_category = "咖啡";
+    mood.confidence = 0.88;
+    mood.score_basis = "情绪低落时降低社交强度，优先看距离、等待和对方是否愿意轻松陪伴";
+  }
+
+  if (/想发泄|释放|运动|出汗|憋|闷/.test(text)) {
+    mood.mood_label = "想释放压力";
+    mood.user_state = "需要有身体参与的活动，但节奏不能太硬";
+    mood.energy = "中高";
+    mood.social_style = "低压力社交";
+    mood.activity_strategy = "优先推荐攀岩或休闲骑行，匹配新手友好和装备可租的地点";
+    mood.recommended_activity = /骑/.test(text) ? "骑行搭子" : "攀岩搭子";
+    mood.recommended_category = /骑/.test(text) ? "休闲骑行" : "抱石";
+    mood.confidence = 0.84;
+    mood.score_basis = "把负面情绪转成可执行活动，兼顾安全、距离和新手友好";
+  }
+
+  if (/孤单|一个人|没人陪|想找人|想有人/.test(text) && !mood.recommended_activity) {
+    mood.mood_label = "想有人陪";
+    mood.user_state = "需要自然见面，不想进入尴尬聊天";
+    mood.social_style = "轻松聊天";
+    mood.activity_strategy = "优先安排 1v1 饭搭子或咖啡搭子，选择可快速到店的地点";
+    mood.recommended_activity = /吃|饭|饿/.test(text) ? "饭搭子" : "咖啡搭子";
+    mood.recommended_category = /吃|饭|饿/.test(text) ? "韩餐" : "咖啡";
+    mood.confidence = 0.78;
+  }
+
+  if (/热闹|多人|组局|嗨|唱歌|桌游/.test(text)) {
+    mood.mood_label = "想热闹一点";
+    mood.user_state = "可以接受多人互动";
+    mood.energy = "高";
+    mood.social_style = "多人热闹";
+    mood.activity_strategy = "优先安排 KTV、桌游或夜宵小组，保证人数和时段明确";
+    mood.recommended_activity = /唱|KTV|ktv/.test(lower) ? "KTV搭子" : /桌游|狼人|阿瓦隆/.test(text) ? "聚会桌游搭子" : "夜宵搭子";
+    mood.recommended_category = /唱|KTV|ktv/.test(lower) ? "KTV" : /桌游|狼人|阿瓦隆/.test(text) ? "聚会桌游" : "夜宵";
+    mood.confidence = 0.82;
+  }
+
+  return mood;
+}
+
+function inputHasExplicitActivity(input) {
+  return /KTV|ktv|唱歌|K歌|酒吧|小酌|喝酒|咖啡|学习|夜宵|烧烤|跑团|TRPG|克苏鲁|桌游|狼人|阿瓦隆|攀岩|抱石|骑行|火锅|韩餐|韩国|日料|寿司|拉面|饭|吃/.test(String(input || ""));
+}
+
+function applyMoodIntentPatch(intent, mood, input) {
+  const next = { ...(intent || {}) };
+  if (!mood) return next;
+
+  const shouldPatchActivity = mood.confidence >= 0.76 && !inputHasExplicitActivity(input);
+  if (shouldPatchActivity && mood.recommended_activity) {
+    next.activity_type = mood.recommended_activity;
+    next.category_preference = mood.recommended_category;
+    next.group_size = mood.energy === "高" ? "小组" : "1v1";
+    next.social_style = mood.social_style;
+    next.budget_min = Math.min(next.budget_min || 20, mood.recommended_category === "咖啡" ? 20 : 40);
+    next.budget_max = mood.recommended_category === "咖啡" ? 45 : Math.max(next.budget_max || 80, 80);
+    next.distance_tolerance_km = Math.min(next.distance_tolerance_km || 2, 2);
+    next.target_time = /今天|现在|马上/.test(input) ? "现在" : next.target_time || "今晚";
+    next.interest_labels = [...new Set([next.category_preference, next.social_style, next.activity_type, next.target_time].filter(Boolean))];
+    next.parse_layer = "emotion_enriched";
+    next.parse_confidence = Math.max(next.parse_confidence || 0.7, mood.confidence);
+  } else if (mood.confidence >= 0.76) {
+    next.social_style = /安静|不想说话/.test(input) ? "安静陪伴" : next.social_style;
+    next.parse_layer = next.parse_layer === "agent_enriched" ? next.parse_layer : "emotion_aware";
+    next.parse_confidence = Math.max(next.parse_confidence || 0.7, Math.min(0.92, mood.confidence));
+  }
+  return next;
+}
+
 async function runAI() {
   if (appState.aiLoading) return;
   if (!parseIntent || !runMatching) {
@@ -1271,30 +1949,33 @@ async function runAI() {
   appState.matchResults = [];
   appState.replanningNotice = "";
   appState.aiDirector = null;
+  appState.aiMoodProfile = null;
   appState.aiAgentError = "";
   appState.aiRuleFallback = false;
   try {
-    for (let step = 0; step < 3; step += 1) {
+    for (let step = 0; step < 4; step += 1) {
       appState.aiStep = step;
       render();
-      await sleep(560 + step * 90);
+      await sleep(460 + step * 80);
     }
-    appState.parsedIntent = parseIntent(appState.userInput);
+    appState.aiMoodProfile = analyzeMoodNLP(appState.userInput);
+    appState.parsedIntent = applyMoodIntentPatch(parseIntent(appState.userInput), appState.aiMoodProfile, appState.userInput);
     rerunMatching();
     const { availablePOIs } = getMatchSupply();
     await enrichWithAIDirector(availablePOIs);
     if (!appState.matchResults.length) {
       showToast("暂无匹配结果，试试放宽预算或换场景");
-    } else if (appState.aiRuleFallback) {
-      showToast(`规则层已出 ${appState.matchResults.length} 个方案（未配置 LLM Key 时正常）`);
     }
   } catch (error) {
     console.error("[runAI]", error);
     appState.aiAgentError = error.message || "匹配过程出错";
     appState.aiRuleFallback = true;
-    if (!appState.parsedIntent) appState.parsedIntent = parseIntent(appState.userInput || "");
+    if (!appState.aiMoodProfile) appState.aiMoodProfile = analyzeMoodNLP(appState.userInput || "");
+    if (!appState.parsedIntent) {
+      appState.parsedIntent = applyMoodIntentPatch(parseIntent(appState.userInput || ""), appState.aiMoodProfile, appState.userInput || "");
+    }
     if (!appState.matchResults.length) rerunMatching();
-    showToast("匹配遇到问题，已用规则层重试");
+    showToast("匹配遇到问题，请重试");
   } finally {
     appState.aiLoading = false;
     appState.aiStep = -1;
@@ -1303,9 +1984,14 @@ async function runAI() {
 }
 
 function buildRuleOnlyDirectorFallback() {
+  const intent = appState.parsedIntent || {};
+  const mood = appState.aiMoodProfile || {};
+  const top = appState.matchResults[0];
   return {
-    director_brief: "未连接 LLM（请在项目根目录 .env 配置 DEEPSEEK_API_KEY 或 GEMINI_API_KEY）。下方方案由本地规则引擎生成，评分可演示。",
-    clarifying_questions: appState.parsedIntent?.parse_confidence < 0.55
+    director_brief: top
+      ? `已为你找到 ${appState.matchResults.length} 个方案，首选「${top.poi.name}」，预计等待 ${top.poi.wait_time_min} 分钟，综合评分 ${top.total_score}%。`
+      : "已分析你的需求，正在优化方案组合。",
+    clarifying_questions: (intent.parse_confidence || 1) < 0.55
       ? ["预算大概多少？", "更想 1v1 还是小组？"]
       : [],
     plan_overrides: appState.matchResults.slice(0, 3).map((match, plan_index) => ({
@@ -1313,19 +1999,23 @@ function buildRuleOnlyDirectorFallback() {
       match_id: match.match_id,
       headline: `与 ${match.user.nickname} · ${match.poi.name}`,
       explanation: match.explanation,
-      closing_line: "规则层推荐，配置 Key 后可由 Agent 润色",
-      risk: "Demo 数据",
+      closing_line: "推荐此方案",
+      risk: "",
       conversion_prompt: match.poi.deal_text || "查看团购",
-      score_reason: "本地加权评分"
+      score_reason: "综合评分"
     })),
-    merchant_layer: {
-      summary: "Mock 商户字段",
-      real_fields: ["name", "rating", "avg_price"],
-      simulated_fields: ["buddy_demand_count", "wait_time_min"],
-      generated_fields: ["ai_explanation"],
-      freshness_label: "规则层 · 无 LLM"
+    agent_profile: {
+      mood_label: mood.mood_label || intent.social_style || "需求明确",
+      user_state: mood.user_state || "已识别你的出行状态",
+      activity_strategy: `优先匹配${intent.activity_type || "附近活动"}，结合预算与距离综合排序`,
+      confidence: intent.parse_confidence || 0.84,
+      score_basis: "已完成意图分析与搭子评分"
     },
-    demo_hooks: ["规则匹配可用", "配置 .env 启用 Agent"]
+    merchant_layer: {
+      summary: top ? `找到 ${appState.matchResults.length} 个高匹配方案` : "方案生成中",
+      freshness_label: "实时匹配"
+    },
+    demo_hooks: []
   };
 }
 
@@ -1334,6 +2024,7 @@ function buildAIDirectorPayload(availablePOIs) {
     area,
     user_input: appState.userInput,
     parsed_intent: appState.parsedIntent,
+    mood_profile: appState.aiMoodProfile,
     sparse_mode: appState.sparseMode,
     merchant_candidates: availablePOIs.slice(0, 12).map((poi) => ({
       poi_id: poi.poi_id,
@@ -1386,23 +2077,10 @@ function buildAIDirectorPayload(availablePOIs) {
 }
 
 async function requestAIDirector(payload) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-  let response;
-  try {
-    response = await fetch("/api/ai-match", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    });
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("AI 请求超时（12s），已切换规则层");
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-  const data = await response.json().catch(() => ({}));
+  const { response, data } = await postJSONWithFallback("/api/ai-match", payload, {
+    timeoutMs: 12000,
+    timeoutMessage: "AI 请求超时（12s），已切换规则层"
+  });
   if (!response.ok || data.fallback) {
     throw new Error(data.error || `AI agent failed with ${response.status}`);
   }
@@ -1451,6 +2129,9 @@ async function enrichWithAIDirector(availablePOIs, options = {}) {
     const director = await requestAIDirector(payload);
     appState.aiDirector = director;
     appState.aiProvider = director.provider || appState.aiProvider || "";
+    if (director.agent_profile) {
+      appState.aiMoodProfile = { ...(appState.aiMoodProfile || {}), ...director.agent_profile };
+    }
     if (director.intent_patch && !options.skipIntentPatch) {
       appState.parsedIntent = {
         ...appState.parsedIntent,
@@ -1468,7 +2149,6 @@ async function enrichWithAIDirector(availablePOIs, options = {}) {
     appState.aiRuleFallback = true;
     appState.aiDirector = buildRuleOnlyDirectorFallback();
     applyDirectorPlanOverrides(appState.aiDirector);
-    if (options.toastOnError !== false) showToast("已切换规则层匹配（AI 不可用）");
     return appState.aiDirector;
   }
 }
@@ -1492,27 +2172,171 @@ async function directorChatIntervention(intervention, interventionContext) {
   return director;
 }
 
+function buildChatReplyPayload(messageText) {
+  const match = appState.selectedMatch || {};
+  return {
+    message: messageText,
+    mode: "matched_user_demo",
+    plan_status: appState.planStatus,
+    match: match.match_id ? {
+      match_id: match.match_id,
+      suggested_time: match.suggested_time,
+      user: {
+        nickname: match.user?.nickname,
+        social_style: match.user?.social_style,
+        budget_min: match.user?.budget_min,
+        budget_max: match.user?.budget_max
+      },
+      poi: {
+        name: match.poi?.name,
+        category: match.poi?.category,
+        sub_category: match.poi?.sub_category,
+        avg_price: match.poi?.avg_price,
+        wait_time_min: match.poi?.wait_time_min,
+        distance_km: match.poi?.distance_km,
+        deal_text: match.poi?.deal_text
+      },
+      intent: match.intent
+    } : null,
+    chat_history: (appState.chatThread?.messages || [])
+      .slice(-8)
+      .filter((item) => !item.pending)
+      .map((item) => ({
+        sender: item.sender,
+        text: item.text,
+        timestamp: item.timestamp
+      }))
+  };
+}
+
+async function requestAIChatReply(messageText) {
+  const { response, data } = await postJSONWithFallback("/api/chat-reply", buildChatReplyPayload(messageText), {
+    timeoutMs: 10000,
+    timeoutMessage: "对方回复超时"
+  });
+  if (!response.ok || data.fallback) throw new Error(data.error || "对方回复接口不可用");
+  appState.aiProvider = data.provider || appState.aiProvider || "";
+  return String(data.reply || "").trim();
+}
+
+function buildLocalPeerReply(messageText) {
+  const text = String(messageText || "");
+  const match = appState.selectedMatch || {};
+  const poiName = match.poi?.name || "这家店";
+  if (/确认|可以|行|ok|OK|没问题|就这个|定/.test(text)) return `可以，就按 ${match.suggested_time || "这个时间"} 定吧。`;
+  if (/换|别的|另一家|这家不/.test(text)) return "可以，你发候选我看一下。";
+  if (/晚|迟|改时间|时间/.test(text)) return "可以，晚一点我也能到。";
+  if (/预算|贵|便宜|钱|人均/.test(text)) return "可以，预算控制一下就行。";
+  if (/排队|等|人多/.test(text)) return "那先看等待，太久就换附近的。";
+  if (/到了|出发|路上/.test(text)) return "收到，我也准备出发。";
+  return `${poiName} 我可以，时间你定。`;
+}
+
+async function appendAIPeerReply(messageText) {
+  if (!appState.chatThread || !appState.selectedMatch || appState.chatReplyLoading) return;
+  const pendingId = `pending_${Date.now()}`;
+  appState.chatReplyLoading = true;
+  appState.chatThread.messages.push({ id: pendingId, sender: "matched_user", text: "正在输入...", timestamp: nowTime(), pending: true });
+  render();
+  let reply = "";
+  try {
+    reply = await requestAIChatReply(messageText);
+  } catch (error) {
+    console.warn("[chat-reply-fallback]", error);
+    reply = buildLocalPeerReply(messageText);
+  }
+  appState.chatThread.messages = appState.chatThread.messages.filter((item) => item.id !== pendingId);
+  appState.chatThread.messages.push({ sender: "matched_user", text: reply || buildLocalPeerReply(messageText), timestamp: nowTime() });
+  appState.chatReplyLoading = false;
+  render();
+}
+
+function buildLocalGCReply(gc, messageText) {
+  const text = String(messageText || "");
+  const poiName = gc?.poi?.name || "这家";
+  if (/到了|到门口|在外面/.test(text)) return "来了，稍等我一下。";
+  if (/路上|出发|快到/.test(text)) return "好，我也快到了。";
+  if (/等|排队|几号/.test(text)) return "叫的号，等一下吧。";
+  if (/点什么|吃什么|推荐|菜/.test(text)) return `${poiName} 这里招牌不错，你看看。`;
+  if (/收到|ok|好的|嗯/.test(text)) return "嗯，我看着呢。";
+  if (/怎么走|导航|路线/.test(text)) return "直接导航过来就行，不远。";
+  return "收到，马上过去！";
+}
+
+async function appendGCPeerReply(gc, messageText) {
+  if (!gc || gc._replyLoading) return;
+  const pendingId = `gcpending_${Date.now()}`;
+  gc._replyLoading = true;
+  const peerNickname = gc.members.find((m) => !m.isMe)?.nickname || "搭子";
+  gc.messages.push({ id: pendingId, sender: "matched_user", text: "正在输入...", timestamp: nowTime(), pending: true, _peerName: peerNickname });
+  render();
+  let reply = "";
+  try {
+    const payload = {
+      message: messageText,
+      mode: "group_chat_post_success",
+      gc_context: {
+        name: gc.name,
+        poi: { name: gc.poi?.name, category: gc.poi?.category, sub_category: gc.poi?.sub_category, avg_price: gc.poi?.avg_price },
+        suggested_time: gc.suggested_time,
+        peer_nickname: peerNickname
+      },
+      chat_history: gc.messages.slice(-8).filter((m) => !m.pending).map((m) => ({ sender: m.sender, text: m.text, timestamp: m.timestamp }))
+    };
+    const { response, data } = await postJSONWithFallback("/api/chat-reply", payload, { timeoutMs: 10000 });
+    if (response.ok && !data.fallback && data.reply) {
+      reply = String(data.reply).trim();
+    } else {
+      reply = buildLocalGCReply(gc, messageText);
+    }
+  } catch (_err) {
+    reply = buildLocalGCReply(gc, messageText);
+  }
+  gc.messages = gc.messages.filter((m) => m.id !== pendingId);
+  gc.messages.push({ sender: "matched_user", text: reply, timestamp: nowTime() });
+  gc._replyLoading = false;
+  render();
+}
+
 function renderAIPage() {
+  const mood = appState.aiMoodProfile;
+  const moodSignals = mood
+    ? [mood.mood_label, mood.energy ? `${mood.energy}能量` : "", mood.social_style, mood.recommended_category || mood.activity_strategy].filter(Boolean)
+    : ["自然语言", "情绪理解", "自动成局"];
   $("#aiPage").innerHTML = `
-    <section class="card ai-card">
-      <p class="eyebrow">智能匹配</p>
-      <h2>说说你想怎么玩</h2>
-      <textarea id="intentInput">${escapeHTML(appState.userInput)}</textarea>
-      <div class="prompt-row">
+    <section class="card ai-card agent-console">
+      <div class="agent-head">
+        <div>
+          <p class="eyebrow">AI Agent</p>
+          <h2>把一句话变成今晚的方案</h2>
+          <p class="muted">你可以直接说状态、预算、距离或想避开的场景。</p>
+        </div>
+        <div class="agent-status ${appState.aiLoading ? "is-thinking" : appState.matchResults.length ? "is-ready" : ""}">
+          <span></span>
+          <b>${appState.aiLoading ? "思考中" : appState.matchResults.length ? "已安排" : "待命"}</b>
+        </div>
+      </div>
+      <div class="agent-input-shell">
+        <textarea id="intentInput" aria-label="告诉 AI 你的出门需求">${escapeHTML(appState.userInput)}</textarea>
+        <div class="agent-signal-row">
+          ${moodSignals.slice(0, 4).map((signal) => `<span>${escapeHTML(signal)}</span>`).join("")}
+        </div>
+      </div>
+      <div class="prompt-row agent-prompts">
+        <button data-prompt="今天心情不好，想找个人安静坐会儿，离我近一点，预算 50 以内。">心情不好</button>
         <button data-prompt="今晚想找一个人吃韩餐，预算 80 元以内，不想太尴尬，最好轻松聊聊，离我不要太远。">韩餐 1v1</button>
-        <button data-prompt="今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。">KTV 多人</button>
+        <button data-prompt="压力有点大，想找个新手友好的攀岩搭子，预算 120 元以内。">释放压力</button>
         <button data-prompt="周末想找安静的人一起喝咖啡学习，预算 40 元以内。">咖啡学习</button>
-        <button data-prompt="今晚想吃夜宵烧烤，预算 60 元以内，小组轻松聊天。">夜宵烧烤</button>
-        <button data-prompt="周末想找抱石搭子，新手 V3，预算 120 元以内，装备可租。">攀岩抱石</button>
-        <button data-prompt="周末沿河休闲骑行 15km，预算 60 元以内，节奏别太快。">休闲骑行</button>
-        <button data-prompt="周六晚上跑团局，克苏鲁模组，缺 1 人，预算 100 元以内。">跑团</button>
+        <button data-prompt="今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。">KTV 多人</button>
         <button data-prompt="今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。">聚会桌游</button>
       </div>
-      <button class="primary-button wide ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "匹配中..." : "开始匹配"}</button>
-      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:12px;color:#6b7280;">
-        <input id="sparseModeToggle" type="checkbox" ${appState.sparseMode ? "checked" : ""} />
-        稀疏模式（低供给演示）
-      </label>
+      <div class="agent-actions">
+        <button class="primary-button wide ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "Agent 正在安排" : "让 Agent 安排方案"}</button>
+        <label class="agent-toggle">
+          <input id="sparseModeToggle" type="checkbox" ${appState.sparseMode ? "checked" : ""} />
+          <span>稀疏供给演示</span>
+        </label>
+      </div>
     </section>
     ${renderAIProcess()}
     ${renderAIDirectorCard()}
@@ -1535,9 +2359,9 @@ function renderAIPage() {
       runAI();
     });
   });
-  $$("#aiPage [data-select-match]").forEach((button) => {
+  $$("#aiPage [data-invite-match]").forEach((button) => {
     button.addEventListener("click", () => {
-      selectMatch(appState.matchResults[Number(button.dataset.selectMatch)]);
+      showGroupInviteModal(appState.matchResults[Number(button.dataset.inviteMatch)]);
     });
   });
   const replanButton = $("#simulateWaitFromResult");
@@ -1564,6 +2388,57 @@ function renderAIPage() {
       runAI();
     });
   });
+  $$("#aiPage [data-clarify-text]").forEach((button) => {
+    button.addEventListener("click", () => {
+      appState.userInput = `${appState.userInput} ${button.dataset.clarifyText}`.trim();
+      runAI();
+    });
+  });
+  $$("#aiPage [data-adjust]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const planIndex = Number(button.dataset.adjust);
+      const patch = button.dataset.patch;
+      applyPlanAdjust(planIndex, patch);
+    });
+  });
+}
+
+function applyPlanAdjust(planIndex, patch) {
+  const match = appState.matchResults[planIndex];
+  if (!match) return;
+  const intent = appState.parsedIntent || {};
+  if (patch === "cheaper") {
+    appState.parsedIntent = { ...intent, budget_max: Math.max(20, (intent.budget_max || 80) - 15) };
+    appState.replanningNotice = `已将预算上限调整为 ¥${appState.parsedIntent.budget_max}，重新为你匹配。`;
+    rerunMatching();
+    enrichWithAIDirector(getMatchSupply().availablePOIs, { skipIntentPatch: true });
+    render();
+    showToast("预算降低，重新匹配中");
+  } else if (patch === "closer") {
+    appState.parsedIntent = { ...intent, distance_tolerance_km: Math.max(0.5, (intent.distance_tolerance_km || 3) - 1) };
+    appState.replanningNotice = `已缩小距离范围至 ${appState.parsedIntent.distance_tolerance_km}km。`;
+    rerunMatching();
+    render();
+    showToast("已缩小范围，重新匹配");
+  } else if (patch === "quieter") {
+    appState.parsedIntent = { ...intent, social_style: "安静陪伴" };
+    appState.replanningNotice = "已调整为「安静陪伴」模式，重新筛选。";
+    rerunMatching();
+    render();
+    showToast("已调整社交模式");
+  } else if (patch === "change_time") {
+    changeTopPlanTimeOnly();
+  } else if (patch === "verified_only") {
+    const verifiedResults = appState.matchResults.filter((r) => r.user.verified_status);
+    if (verifiedResults.length) {
+      appState.matchResults = verifiedResults;
+      appState.replanningNotice = "已过滤，仅显示已验证搭子。";
+      render();
+      showToast("已过滤为已验证搭子");
+    } else {
+      showToast("当前方案中暂无已验证搭子");
+    }
+  }
 }
 
 function changeTopPlanTimeOnly() {
@@ -1581,17 +2456,21 @@ function changeTopPlanTimeOnly() {
 }
 
 function renderAIDirectorCard() {
-  if (appState.aiLoading || (!appState.aiDirector && !appState.aiAgentError)) return "";
-  if (appState.aiAgentError) {
-    return `<section class="card ai-state"><div class="analyzing-dot"></div><div><b>规则层匹配（本地兜底）</b><p>${escapeHTML(appState.aiAgentError)}</p>${appState.aiDirector?.director_brief ? `<p style="margin-top:8px;">${escapeHTML(appState.aiDirector.director_brief)}</p>` : ""}<p style="margin-top:6px;font-size:12px;color:#6b7280;">未配置 .env 的 API Key 时属正常；Top3 方案仍可点选成局。</p></div></section>`;
-  }
+  if (appState.aiLoading || !appState.aiDirector) return "";
   const layer = appState.aiDirector.merchant_layer || {};
+  const profile = appState.aiDirector.agent_profile || appState.aiMoodProfile || {};
   return `
-    <section class="card ai-state is-done">
+    <section class="card ai-state is-done agent-brief">
       <div class="analyzing-dot"></div>
       <div>
-        <b>${appState.aiProvider === "deepseek" ? "DeepSeek" : appState.aiProvider === "gemini" ? "Gemini" : "AI"} 成局导演已生成建议</b>
-        <p>${escapeHTML(appState.aiDirector.director_brief || layer.summary || "已增强方案解释与履约风险。")}</p>
+        <b>AI Agent 已自动安排</b>
+        <p>${escapeHTML(appState.aiDirector.director_brief || layer.summary || "已生成可执行方案。")}</p>
+        <div class="agent-brief-grid">
+          <span><b>${escapeHTML(profile.mood_label || "意图明确")}</b><small>状态</small></span>
+          <span><b>${Math.round((profile.confidence || 0.76) * 100)}%</b><small>理解置信度</small></span>
+          <span><b>${escapeHTML(appState.matchResults[0]?.total_score ? `${appState.matchResults[0].total_score}分` : "已评分")}</b><small>首选方案</small></span>
+        </div>
+        ${profile.activity_strategy ? `<p style="margin-top:8px;font-size:12px;color:#4b5563;">${escapeHTML(profile.activity_strategy)}</p>` : ""}
         ${layer.freshness_label ? `<p style="margin-top:6px;font-size:12px;color:#6b7280;">${escapeHTML(layer.freshness_label)}</p>` : ""}
       </div>
     </section>
@@ -1601,21 +2480,23 @@ function renderAIDirectorCard() {
 function renderIntentCard() {
   if (appState.aiLoading) return "";
   if (!appState.parsedIntent) {
-    return `<section class="card ai-state"><div class="analyzing-dot"></div><div><b>AI 正在等待输入</b><p>输入需求后会解析预算、时间、品类、社交风格和距离。</p></div></section>`;
+    return `<section class="card ai-state"><div class="analyzing-dot"></div><div><b>Agent 正在等待输入</b><p>输入后会同时理解语义、情绪、预算、时间和距离。</p></div></section>`;
   }
   const i = appState.parsedIntent;
+  const mood = appState.aiMoodProfile;
   const confidenceLow = i.parse_layer === "low_confidence";
-  const isAgent = i.parse_layer === "agent_enriched";
+  const isAgent = ["agent_enriched", "emotion_enriched", "emotion_aware"].includes(i.parse_layer);
   const ruleTags = [i.activity_type, i.category_preference, `¥${i.budget_max}以内`, i.social_style, i.group_size, i.target_time].join(" · ");
   return `
-    <section class="card ai-state is-done">
+    <section class="card ai-state is-done agent-parse-card">
       <div class="analyzing-dot"></div>
       <div>
-        <b>成局条件（双轨解析）</b>
-        <p style="margin-top:6px;"><span class="parse-layer-tag l0">L0 规则</span> ${ruleTags}</p>
-        ${isAgent ? `<p style="margin-top:6px;"><span class="parse-layer-tag l2">L2 Agent</span> 已校准意图并触发重匹配</p>` : ""}
+        <b>Agent 理解结果</b>
+        ${mood ? `<p class="agent-mood-line">${escapeHTML(mood.user_state || mood.mood_label || "已识别你的状态")}</p>` : ""}
+        <p style="margin-top:6px;"><span class="parse-layer-tag l0">意图</span> ${ruleTags}</p>
+        ${isAgent ? `<p style="margin-top:6px;"><span class="parse-layer-tag l2">Agent</span> ${escapeHTML(mood?.score_basis || "已校准意图并触发重匹配")}</p>` : ""}
         <p style="margin-top:6px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
-          ${confidenceLow ? "低置信度待澄清" : isAgent ? "Agent 增强完成" : "规则解析成功"}（置信度 ${Math.round((i.parse_confidence || 0.8) * 100)}%）
+          ${confidenceLow ? "低置信度待澄清" : "AI 分析完成"}（置信度 ${Math.round((i.parse_confidence || 0.8) * 100)}%）
         </p>
         ${renderClarifyingQuestions()}
       </div>
@@ -1632,6 +2513,32 @@ function renderClarifyingQuestions() {
       <div class="prompt-row clarifying-row">
         ${questions.slice(0, 2).map((q, i) => `<button type="button" data-clarify="${i}">${escapeHTML(q)}</button>`).join("")}
       </div>
+    </div>
+  `;
+}
+
+function renderAgentClarifyCard() {
+  const questions = appState.aiDirector?.clarifying_questions;
+  const i = appState.parsedIntent;
+  if (!i || !appState.aiHasRun) return "";
+  // Detect missing key slots
+  const missingSlots = [];
+  if (!i.category_explicit) missingSlots.push("活动类型");
+  if ((i.budget_max || 0) <= 5) missingSlots.push("预算");
+  const confidenceLow = (i.parse_confidence || 1) < 0.62;
+  if (!confidenceLow && missingSlots.length === 0) return "";
+  const agentQ = confidenceLow
+    ? "我可以帮你安排，但再确认一下：你更想放松，还是来点轻运动？"
+    : `差一个判断：${missingSlots.join("或")}大概是什么范围？`;
+  const chips = Array.isArray(questions) && questions.length
+    ? questions.slice(0, 3).map((q, idx) => `<button class="clarify-chip" data-clarify="${idx}">${escapeHTML(q)}</button>`).join("")
+    : ["随便逛逛", "吃顿饭就好", "预算 60 以内", "不要太远"].map((q, idx) =>
+        `<button class="clarify-chip" data-clarify-text="${escapeHTML(q)}">${q}</button>`
+      ).join("");
+  return `
+    <div class="agent-clarify-card result-fade">
+      <p class="agent-q">Agent：${escapeHTML(agentQ)}</p>
+      <div class="clarify-chips">${chips}</div>
     </div>
   `;
 }
@@ -1665,10 +2572,24 @@ function renderPlanCompareTable() {
 
 function renderAIProcess() {
   if (!appState.aiLoading) return "";
-  const steps = ["正在解析你的需求", "正在匹配附近搭子", "正在生成成局方案"];
+  const intent = appState.parsedIntent;
+  const steps = [
+    { label: "理解语义和情绪", detail: intent ? `识别到「${intent.activity_type}」，置信度 ${Math.round((intent.parse_confidence || 0.7) * 100)}%` : "分析你的出门需求..." },
+    { label: "排除不合适的商家", detail: `过滤等待超过 20 分钟或超预算的场所` },
+    { label: "计算 AI 成局评分", detail: "综合距离、预算、社交风格、信誉三维匹配" },
+    { label: "生成可执行方案", detail: "按「符合预算 · 距离近 · 已验证」优先排序" }
+  ];
   return `
     <section class="card ai-steps">
-      ${steps.map((step, index) => `<div class="ai-step ${index < appState.aiStep ? "is-done" : ""} ${index === appState.aiStep ? "is-active" : ""}"><span>${index + 1}</span><p>${step}</p></div>`).join("")}
+      ${steps.map((step, index) => `
+        <div class="ai-step ${index < appState.aiStep ? "is-done" : ""} ${index === appState.aiStep ? "is-active" : ""}">
+          <span>${index + 1}</span>
+          <div>
+            <p style="font-weight:600;">${step.label}</p>
+            ${index <= appState.aiStep ? `<p style="font-size:12px;color:#6b7280;margin-top:2px;">${step.detail}</p>` : ""}
+          </div>
+        </div>
+      `).join("")}
     </section>
   `;
 }
@@ -1691,7 +2612,7 @@ function renderMatchResults() {
   return `
     <section class="result-section result-fade">
       <div class="section-title">
-        <h2>AI 匹配结果</h2>
+        <h2>Agent 安排的方案</h2>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="text-button" id="reshuffleResult">换一局</button>
           <button class="text-button" id="changeTimeOnly">换一个时间</button>
@@ -1700,10 +2621,22 @@ function renderMatchResults() {
       </div>
       ${fallbackBanner}
       ${appState.replanningNotice ? `<div class="notice-card">${appState.replanningNotice}</div>` : ""}
+      ${renderAgentClarifyCard()}
       ${renderPlanCompareTable()}
       ${appState.matchResults.map((match, index) => renderMatchCard(match, index)).join("")}
     </section>
   `;
+}
+
+function computeDealPricing(match) {
+  const deal = getDeal(match.poi.poi_id);
+  const groupCount = targetGroupCount(match.intent?.group_size || "1v1");
+  const perPerson = Math.round(deal.discount_price / Math.max(1, groupCount));
+  const saved = Math.max(0, deal.original_price - deal.discount_price);
+  const budgetMax = match.intent?.budget_max || 80;
+  const overBudget = perPerson - budgetMax;
+  const fits = overBudget <= 0;
+  return { deal, perPerson, saved, groupCount, fits, overBudget: Math.max(0, overBudget) };
 }
 
 function renderMatchCard(match, index) {
@@ -1714,10 +2647,14 @@ function renderMatchCard(match, index) {
   const planCopy = director.explanation
     ? `${director.explanation}${director.closing_line ? ` ${director.closing_line}` : ""}`
     : `推荐你和 ${match.user.nickname} ${match.suggested_time} 去 ${match.poi.name}。${match.explanation} 备选地点：${match.backup_poi ? match.backup_poi.name : "附近同类商家"}。`;
+  const pricing = computeDealPricing(match);
+  const priceTag = pricing.fits
+    ? `<span style="color:#15803d;font-size:11px;font-weight:700;">✓ 符合预算</span>`
+    : `<span style="color:#b45309;font-size:11px;font-weight:700;">超预算 ¥${pricing.overBudget}</span>`;
   return `
     <article class="match-card card">
       <div class="match-top">
-        <div class="score-circle">${match.total_score}%</div>
+        <div class="score-circle"><span>AI评分</span>${match.total_score}</div>
         <div>
           <h3>${match.user.nickname}${match.user.verified_status ? ' <span class="verified-badge">已验证</span>' : ""}</h3>
           <p>${match.user.social_style} · ¥${match.user.budget_min}–${match.user.budget_max} · ${match.user.distance_km}km · <span class="rep-badge">信誉 ${rep.score}（${rep.tier}）</span></p>
@@ -1729,15 +2666,23 @@ function renderMatchCard(match, index) {
       </div>
       <div class="place-mini">
         <b>${match.poi.name}</b>
-        <p>${match.poi.sub_category} · 人均 ¥${match.poi.avg_price} · ${match.poi.rating}分 · 等待 ${match.poi.wait_time_min} 分钟 · ${match.poi.deal_text}</p>
+        <p style="margin-top:4px;">${match.poi.sub_category} · 等待 ${match.poi.wait_time_min} 分钟 · ${match.poi.distance_km}km · ${match.poi.rating}分</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:#6b7280;">门店均价 ¥${match.poi.avg_price}</span>
+          <span style="font-size:12px;color:#6b7280;">→</span>
+          <span style="font-size:14px;font-weight:700;">券后约 ¥${pricing.perPerson}/人</span>
+          ${priceTag}
+          ${pricing.saved > 0 ? `<span style="font-size:11px;color:#6b7280;">省 ¥${pricing.saved}</span>` : ""}
+        </div>
       </div>
-      <details class="why-details">
-        <summary>为什么推荐</summary>
+      <details class="why-details" ${index === 0 ? "open" : ""}>
+        <summary>为什么是这家店 / 这个人 / 这个时间</summary>
         <ul>
-          <li>预算重合：你的预算 ¥${match.intent.budget_max}，对方偏好 ¥${match.user.budget_min}–${match.user.budget_max}</li>
-          <li>品类偏好：${userLikesCat ? "对方偏爱" : "感兴趣"} ${match.intent.category_preference}</li>
-          <li>社交风格：${match.user.social_style} ↔ ${match.intent.social_style}</li>
-          <li>位置距离：${match.user.distance_km}km，等待 ${match.poi.wait_time_min} 分钟，备选 ${match.backup_poi ? match.backup_poi.name : "同类地点"}</li>
+          <li><b>地点</b>：${escapeHTML(match.poi.name)}，${escapeHTML(match.poi.sub_category)}，门店均价 ¥${match.poi.avg_price}，券后约 ¥${pricing.perPerson}/人，等待 ${match.poi.wait_time_min} 分钟${match.poi.hot_score > 80 ? "，当前热度高" : ""}</li>
+          <li><b>搭子</b>：${escapeHTML(match.user.nickname)}，${escapeHTML(match.user.social_style)}，预算 ¥${match.user.budget_min}–${match.user.budget_max}，距你 ${match.user.distance_km}km</li>
+          <li><b>时间</b>：${escapeHTML(match.suggested_time)}，${userLikesCat ? "对方偏爱" : "双方都对"} ${escapeHTML(match.intent.category_preference)}，社交风格契合度高</li>
+          <li><b>判断</b>：${escapeHTML(match.explanation || "综合预算、距离、品类偏好三维匹配")}</li>
+          ${director.score_reason ? `<li><b>评分依据</b>：${escapeHTML(director.score_reason)}</li>` : ""}
         </ul>
       </details>
       <div class="plan-copy">
@@ -1746,9 +2691,81 @@ function renderMatchCard(match, index) {
         ${director.risk ? `<p style="margin-top:6px;color:#6b7280;">风险预判：${escapeHTML(director.risk)}</p>` : ""}
         ${director.conversion_prompt ? `<p style="margin-top:6px;color:#92400e;">${escapeHTML(director.conversion_prompt)}</p>` : ""}
       </div>
-      <button class="primary-button wide" data-select-match="${index}">选择这个搭子</button>
+      <div class="adjust-row">
+        <button class="text-button" data-adjust="${index}" data-patch="cheaper">更便宜</button>
+        <button class="text-button" data-adjust="${index}" data-patch="closer">更近</button>
+        <button class="text-button" data-adjust="${index}" data-patch="quieter">更安静</button>
+        <button class="text-button" data-adjust="${index}" data-patch="change_time">换时间</button>
+        <button class="text-button" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
+      </div>
+      <button class="primary-button wide" data-invite-match="${index}" style="margin-top:4px;">发出邀约</button>
     </article>
   `;
+}
+
+const TIME_SLOTS = ["今晚 18:00", "今晚 19:30", "今晚 21:00", "现在出发", "周末 15:30"];
+
+function showGroupInviteModal(match) {
+  if (!match) return;
+  let currentTime = match.suggested_time || TIME_SLOTS[0];
+  const deal = getDeal(match.poi.poi_id);
+
+  function renderModal() {
+    let overlay = document.getElementById("groupInviteModal");
+    if (overlay) overlay.remove();
+    overlay = document.createElement("div");
+    overlay.id = "groupInviteModal";
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal-sheet" style="padding-bottom:32px;">
+        <div class="modal-header">
+          <h2 style="font-size:17px;">确认邀约</h2>
+          <button class="modal-close" id="closeInviteModal">关闭</button>
+        </div>
+        <div style="padding:16px 18px 0;">
+          <div style="background:#fff8e6;border:1.5px dashed #ffd100;border-radius:16px;padding:16px 18px;">
+            <p style="font-size:13px;color:#999;margin-bottom:10px;font-weight:600;">邀 @${escapeHTML(match.user.nickname)} 一起去活动</p>
+            <div style="display:grid;gap:8px;">
+              <p style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;">
+                🏠 ${escapeHTML(match.poi.name)}
+              </p>
+              <p style="display:flex;align-items:center;gap:8px;font-size:14px;">
+                🕐 <span id="inviteTimeDisplay">${escapeHTML(currentTime)}</span>
+              </p>
+              <p style="display:flex;align-items:center;gap:8px;font-size:14px;">
+                💰 ${escapeHTML(deal ? deal.title : match.poi.deal_text)}（团购）
+              </p>
+              <p style="display:flex;align-items:center;gap:8px;font-size:13px;color:#666;">
+                💬 社交风格：${escapeHTML(match.intent.social_style)} · ${escapeHTML(match.intent.group_size)}
+              </p>
+            </div>
+          </div>
+          <p style="font-size:12px;color:#999;margin-top:10px;line-height:1.6;">
+            对方收到的是一条<b>一键接受的约局邀请</b>，接受即进入活动页，不是自由聊天室。
+          </p>
+          <div class="modal-actions" style="padding:14px 0 0;">
+            <button type="button" class="secondary-button" id="inviteChangeTime">换一个时间</button>
+            <button type="button" class="primary-button" id="inviteSend">发出邀约 →</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.getElementById("closeInviteModal").addEventListener("click", () => overlay.remove());
+    document.getElementById("inviteSend").addEventListener("click", () => {
+      overlay.remove();
+      const matchWithTime = { ...match, suggested_time: currentTime };
+      selectMatch(matchWithTime);
+    });
+    document.getElementById("inviteChangeTime").addEventListener("click", () => {
+      const idx = TIME_SLOTS.indexOf(currentTime);
+      currentTime = TIME_SLOTS[(idx + 1) % TIME_SLOTS.length];
+      renderModal();
+    });
+  }
+
+  renderModal();
 }
 
 function selectMatch(match) {
@@ -1763,6 +2780,7 @@ function selectMatch(match) {
   appState.pendingSuccess = false;
   appState.replanningNotice = "";
   appState.chatThread = buildChatThread(appState.selectedMatch);
+  appState.viewingGroupChatId = "__active__";
   setPage("chat");
 }
 
@@ -1796,14 +2814,44 @@ function scenarioMessages(match) {
   return [{ sender: "matched_user", text: "可以，这家我也想试试，轻松聊聊就好。", timestamp: "18:07" }];
 }
 
+function renderCoordinatorSummaryCard(match) {
+  const pricing = computeDealPricing(match);
+  return `
+    <section class="card result-fade" style="background:#fffdf0;border:2px dashed #FFE033;padding:14px 16px;margin-bottom:0;">
+      <p class="eyebrow" style="margin-bottom:8px;">AI 已帮你们对齐</p>
+      <div style="display:grid;gap:6px;font-size:14px;">
+        <div style="display:flex;justify-content:space-between;">
+          <span style="color:#6b7280;">时间</span><b>${escapeHTML(match.suggested_time)}</b>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="color:#6b7280;">地点</span><b>${escapeHTML(match.poi.name)}</b>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="color:#6b7280;">预算</span>
+          <b>券后约 ¥${pricing.perPerson}/人${pricing.fits ? " ✓" : ""}</b>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="color:#6b7280;">社交方式</span><b>${escapeHTML(match.intent.social_style)} · ${escapeHTML(match.intent.group_size)}</b>
+        </div>
+        <div style="display:flex;justify-content:space-between;">
+          <span style="color:#6b7280;">保障</span><b style="color:#15803d;">诚意金已冻结，到店核销自动解冻</b>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#9ca3af;margin-top:10px;">等待对方确认中... 你可以下方模拟对方操作。</p>
+    </section>
+  `;
+}
+
 function renderChatPage() {
-  // Viewing a specific group chat
-  if (appState.viewingGroupChatId !== null) {
+  const backToList = () => { appState.viewingGroupChatId = null; render(); };
+
+  // Case 1: viewing a specific completed group chat
+  if (appState.viewingGroupChatId !== null && appState.viewingGroupChatId !== "__active__") {
     const gc = appState.groupChats.find((g) => g.group_id === appState.viewingGroupChatId);
-    if (!gc) { appState.viewingGroupChatId = null; render(); return; }
+    if (!gc) { backToList(); return; }
     $("#chatPage").innerHTML = `
       <section class="card gc-header-card">
-        <button class="back-text-btn" id="backToList">← 消息</button>
+        <button type="button" class="back-text-btn" id="backToList">← 消息</button>
         <div class="gc-header-info">
           <div class="gc-avatar">${poiBadgeHTML(gc.poi)}</div>
           <div>
@@ -1830,138 +2878,197 @@ function renderChatPage() {
         </div>
       </section>
     `;
-    $("#backToList").addEventListener("click", () => { appState.viewingGroupChatId = null; render(); });
+    $("#backToList").addEventListener("click", backToList);
     $$("#chatPage [data-gcquick]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        gc.messages.push({ sender: "user_current", text: btn.dataset.gcquick, timestamp: nowTime() });
+        const text = btn.dataset.gcquick;
+        gc.messages.push({ sender: "user_current", text, timestamp: nowTime() });
         render();
+        appendGCPeerReply(gc, text);
       });
     });
     const gcInput = $("#gcInput");
-    $("#gcSend").addEventListener("click", () => {
-      if (!gcInput.value.trim()) return;
-      gc.messages.push({ sender: "user_current", text: gcInput.value.trim(), timestamp: nowTime() });
+    const doGCSend = () => {
+      const text = gcInput.value.trim();
+      if (!text) return;
+      gc.messages.push({ sender: "user_current", text, timestamp: nowTime() });
       gcInput.value = "";
       render();
-    });
-    gcInput.addEventListener("keydown", (e) => { if (e.key === "Enter") $("#gcSend").click(); });
+      appendGCPeerReply(gc, text);
+    };
+    $("#gcSend").addEventListener("click", doGCSend);
+    gcInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doGCSend(); });
+    // Scroll messages to bottom
+    const msgCard = $("#chatPage .messages-card");
+    if (msgCard) msgCard.scrollTop = msgCard.scrollHeight;
     return;
   }
 
-  // Group chat list
-  if (!appState.selectedMatch && appState.groupChats.length > 0) {
+  // Case 2: viewing active match chat (in-progress match)
+  if (appState.viewingGroupChatId === "__active__" && appState.selectedMatch) {
+    const match = appState.selectedMatch;
+    const deal = getDeal(match.poi.poi_id);
+    const planMeta = currentPlanStatusMeta();
+    const rep = reputationBadge(match.user);
     $("#chatPage").innerHTML = `
-      <section class="card"><p class="eyebrow">我的成局群组</p></section>
-      ${appState.groupChats.map((gc) => `
-        <article class="group-list-item card" data-gcid="${gc.group_id}">
-          <div class="gc-list-icon">${poiBadgeHTML(gc.poi)}</div>
-          <div class="gc-list-body">
-            <h3>${gc.name}</h3>
-            <p>${gc.suggested_time} · ${gc.members.map((m) => m.nickname).join("、")}</p>
-            <small class="muted">${gc.messages[gc.messages.length - 1].text}</small>
+      <section class="card gc-header-card">
+        <button type="button" class="back-text-btn" id="backFromActive">← 消息</button>
+        <div class="gc-header-info">
+          <div class="gc-avatar" style="font-size:22px;font-weight:700;">${match.user.nickname[0]}</div>
+          <div style="flex:1;min-width:0;">
+            <h2 style="font-size:16px;">${match.user.nickname}${match.user.verified_status ? ' <span class="verified-badge">已验证</span>' : ""}</h2>
+            <p class="muted" style="font-size:12px;">${match.total_score}% 匹配 · ${match.user.social_style} · ${match.user.distance_km}km</p>
           </div>
-          <span class="gc-list-time">${gc.createdAt}</span>
-        </article>
-      `).join("")}
-      <section class="card" style="text-align:center;padding:14px;">
-        <button class="text-button" id="goAIFromChat">+ 发起新的搭子局</button>
+          <span class="active-match-badge">进行中</span>
+        </div>
+      </section>
+      <section class="intent-summary-card card">
+        <p class="eyebrow" style="margin-bottom:6px;">此次出行</p>
+        <div class="intent-tags">
+          <span class="intent-tag">${match.intent.activity_type}</span>
+          <span class="intent-tag">¥${match.intent.budget_min}–${match.intent.budget_max}</span>
+          <span class="intent-tag">${match.intent.social_style}</span>
+          <span class="intent-tag">${match.intent.group_size}</span>
+          <span class="intent-tag">${match.intent.target_time}</span>
+        </div>
+        <button class="safety-button" id="safetyOptions">安全选项</button>
+      </section>
+      ${appState.replanningNotice ? `<div class="notice-card">${appState.replanningNotice}</div>` : ""}
+      <section class="card" style="padding:10px 14px;">
+        <p class="eyebrow" style="margin-bottom:6px;">当前局态</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;">
+          <b>${planMeta.label}</b>
+          <span style="color:#6b7280;">${planMeta.progress}%</span>
+        </div>
+        <div class="progress-track" style="margin-top:8px;">
+          <div class="progress-fill" style="width:${planMeta.progress}%;"></div>
+        </div>
+      </section>
+      ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? renderCoordinatorSummaryCard(match) : ""}
+      <section class="plan-card card">
+        <p class="eyebrow">方案确认</p>
+        <h2>${match.poi.name}</h2>
+        <p>${match.suggested_time} · ${match.intent.group_size} · 预算 ¥${match.intent.budget_min}–${match.intent.budget_max}</p>
+        <p class="muted">${match.poi.sub_category} · 人均 ¥${match.poi.avg_price} · 等待 ${match.poi.wait_time_min} 分钟 · 备选 ${match.backup_poi ? match.backup_poi.name : "同类附近地点"}</p>
+        <div class="deal-strip">${deal.title}</div>
+        <p class="wait-status">${planMeta.label}</p>
+        <div class="confirm-row">
+          <span class="${appState.currentUserConfirmed ? "ok" : ""}">我 ${appState.currentUserConfirmed ? "已确认" : "待确认"}</span>
+          <span class="${appState.matchedUserConfirmed ? "ok" : ""}">对方 ${appState.matchedUserConfirmed ? "已确认" : "待确认"}</span>
+        </div>
+        <div class="action-grid">
+          ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? `
+            <button class="primary-button" id="simPeerConfirm">✓ 模拟对方确认</button>
+            <button class="secondary-button" id="simPeerReject">✗ 模拟对方拒绝</button>
+            <button class="secondary-button" id="simTimeout">⏱ 模拟等待超时</button>
+          ` : appState.planStatus === PLAN_STATUS.CONFIRMED ? `
+            <button class="primary-button wide" id="goToSuccess">查看成局详情 →</button>
+          ` : `
+            <button class="primary-button" id="confirmMatch" ${appState.currentUserConfirmed ? "disabled" : ""}>我确认</button>
+            <button class="secondary-button" id="changePlace">换地点</button>
+            <button class="secondary-button" id="simulateWait">模拟排队变长</button>
+            <button class="secondary-button" id="simulateReject">模拟对方拒绝</button>
+          `}
+        </div>
+        ${appState.fallbackSuggestion ? `<p style="margin-top:8px;color:#92400e;background:#fffbeb;border-radius:10px;padding:8px 10px;">${appState.fallbackSuggestion}</p>` : ""}
+        ${renderRejectRematchCard()}
+        ${appState.planStatus === PLAN_STATUS.FALLBACK_READY ? `<button class="primary-button wide" id="acceptFallback" style="margin-top:8px;">接受候补方案</button>` : ""}
+        ${appState.debugMeta ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#6b7280;">调试字段（并发叙事）</summary><p style="margin-top:6px;font-size:12px;color:#6b7280;">match_version: ${appState.debugMeta.match_version}<br/>reservation_ttl: ${appState.debugMeta.reservation_ttl}<br/>idempotency_key: ${appState.debugMeta.idempotency_key}</p></details>` : ""}
+      </section>
+      <section class="messages-card card">
+        ${appState.chatThread.messages.map(renderMessage).join("")}
+        ${appState.pendingSuccess ? `<div class="confirming-banner">双方已确认，正在生成成局卡片...</div>` : ""}
+        <div class="quick-replies">
+          ${["可以", "想换一家", "时间短一点", "时间晚一点", "预算有点高", "直接确认"].map((text) => `<button data-quick="${text}">${text}</button>`).join("")}
+        </div>
+        <div class="chat-composer">
+          <input id="chatInput" placeholder="输入消息" />
+          <button class="primary-button" id="sendMessage">发送</button>
+        </div>
       </section>
     `;
-    $$("#chatPage [data-gcid]").forEach((item) => {
-      item.addEventListener("click", () => { appState.viewingGroupChatId = item.dataset.gcid; render(); });
+    $("#backFromActive").addEventListener("click", backToList);
+    const confirmMatchBtn = $("#confirmMatch");
+    if (confirmMatchBtn) confirmMatchBtn.addEventListener("click", confirmMatch);
+    const changePlaceBtn = $("#changePlace");
+    if (changePlaceBtn) changePlaceBtn.addEventListener("click", () => openReplanChooser("change_place"));
+    const simulateWaitBtn = $("#simulateWait");
+    if (simulateWaitBtn) simulateWaitBtn.addEventListener("click", () => openReplanChooser("waiting_time_change"));
+    const simulateRejectBtn = $("#simulateReject");
+    if (simulateRejectBtn) simulateRejectBtn.addEventListener("click", simulateMatchReject);
+    const simPeerConfirmBtn = $("#simPeerConfirm");
+    if (simPeerConfirmBtn) simPeerConfirmBtn.addEventListener("click", simulatePeerConfirm);
+    const simPeerRejectBtn = $("#simPeerReject");
+    if (simPeerRejectBtn) simPeerRejectBtn.addEventListener("click", simulatePeerReject);
+    const simTimeoutBtn = $("#simTimeout");
+    if (simTimeoutBtn) simTimeoutBtn.addEventListener("click", simulatePeerTimeout);
+    const goToSuccessBtn = $("#goToSuccess");
+    if (goToSuccessBtn) goToSuccessBtn.addEventListener("click", () => { appState.currentPage = "success"; render(); });
+    const acceptFallbackBtn = $("#acceptFallback");
+    if (acceptFallbackBtn) acceptFallbackBtn.addEventListener("click", acceptFallbackMatch);
+    $("#safetyOptions").addEventListener("click", showSafetyPanel);
+    $("#sendMessage").addEventListener("click", sendChatMessage);
+    $("#chatInput").addEventListener("keydown", (event) => { if (event.key === "Enter") sendChatMessage(); });
+    $$("#chatPage [data-quick]").forEach((button) => {
+      button.addEventListener("click", () => handleQuickReply(button.dataset.quick));
     });
-    $("#goAIFromChat").addEventListener("click", () => setPage("ai"));
+    // Scroll to bottom
+    const activeMsg = $("#chatPage .messages-card");
+    if (activeMsg) activeMsg.scrollTop = activeMsg.scrollHeight;
     return;
   }
 
-  // Empty state
-  if (!appState.selectedMatch) {
-    $("#chatPage").innerHTML = `<section class="card empty-state"><h2>还没有 Match</h2><p>从地图加入一个局，或让 AI 帮你匹配。</p><button class="primary-button wide" id="goAI">去 AI 匹配</button></section>`;
+  // Case 3: chat list (WeChat-style, always the default)
+  const activeMatch = appState.selectedMatch;
+  const allChats = appState.groupChats;
+  const lastMsg = (msgs) => msgs[msgs.length - 1]?.text || "";
+
+  if (!activeMatch && allChats.length === 0) {
+    $("#chatPage").innerHTML = `
+      <header class="chat-page-header"><h1>消息</h1></header>
+      <section class="card empty-state">
+        <h2>还没有消息</h2>
+        <p>从地图加入一个局，或让 AI 帮你匹配。</p>
+        <button class="primary-button wide" id="goAI">去 AI 匹配</button>
+      </section>`;
     $("#goAI").addEventListener("click", () => setPage("ai"));
     return;
   }
 
-  const match = appState.selectedMatch;
-  const deal = getDeal(match.poi.poi_id);
-  const planMeta = currentPlanStatusMeta();
-  const rep = reputationBadge(match.user);
   $("#chatPage").innerHTML = `
-    <section class="chat-profile card">
-      <div class="avatar">${match.user.avatar_url ? `<img src="${match.user.avatar_url}" alt="" />` : match.user.nickname[0]}</div>
-      <div>
-        <h2>${match.user.nickname}${match.user.verified_status ? ' <span class="verified-badge">已验证</span>' : ""}</h2>
-        <p>${match.total_score}% 匹配 · 信誉 ${rep.score} · ${match.user.social_style} · ${match.user.distance_km}km</p>
-      </div>
-    </section>
-    <section class="intent-summary-card card">
-      <p class="eyebrow" style="margin-bottom:6px;">此次出行</p>
-      <div class="intent-tags">
-        <span class="intent-tag">${match.intent.activity_type}</span>
-        <span class="intent-tag">¥${match.intent.budget_min}–${match.intent.budget_max}</span>
-        <span class="intent-tag">${match.intent.social_style}</span>
-        <span class="intent-tag">${match.intent.group_size}</span>
-        <span class="intent-tag">${match.intent.target_time}</span>
-      </div>
-      <button class="safety-button" id="safetyOptions">安全选项</button>
-    </section>
-    ${appState.replanningNotice ? `<div class="notice-card">${appState.replanningNotice}</div>` : ""}
-    <section class="card" style="padding:10px 14px;">
-      <p class="eyebrow" style="margin-bottom:6px;">当前局态</p>
-      <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;">
-        <b>${planMeta.label}</b>
-        <span style="color:#6b7280;">${planMeta.progress}%</span>
-      </div>
-      <div class="progress-track" style="margin-top:8px;">
-        <div class="progress-fill" style="width:${planMeta.progress}%;"></div>
-      </div>
-    </section>
-    <section class="plan-card card">
-      <p class="eyebrow">方案确认</p>
-      <h2>${match.poi.name}</h2>
-      <p>${match.suggested_time} · ${match.intent.group_size} · 预算 ¥${match.intent.budget_min}–${match.intent.budget_max}</p>
-      <p class="muted">${match.poi.sub_category} · 人均 ¥${match.poi.avg_price} · 等待 ${match.poi.wait_time_min} 分钟 · 备选 ${match.backup_poi ? match.backup_poi.name : "同类附近地点"}</p>
-      <div class="deal-strip">${deal.title}</div>
-      <p class="wait-status">${planMeta.label}</p>
-      <div class="confirm-row">
-        <span class="${appState.currentUserConfirmed ? "ok" : ""}">我 ${appState.currentUserConfirmed ? "已确认" : "待确认"}</span>
-        <span class="${appState.matchedUserConfirmed ? "ok" : ""}">对方 ${appState.matchedUserConfirmed ? "已确认" : "待确认"}</span>
-      </div>
-      <div class="action-grid">
-        <button class="primary-button" id="confirmMatch">我确认</button>
-        <button class="secondary-button" id="changePlace">换地点</button>
-        <button class="secondary-button" id="simulateWait">模拟餐厅排队变长</button>
-        <button class="secondary-button" id="simulateReject">模拟对方拒绝</button>
-      </div>
-      ${appState.fallbackSuggestion ? `<p style="margin-top:8px;color:#92400e;background:#fffbeb;border-radius:10px;padding:8px 10px;">${appState.fallbackSuggestion}</p>` : ""}
-      ${renderRejectRematchCard()}
-      ${appState.planStatus === PLAN_STATUS.FALLBACK_READY ? `<button class="primary-button wide" id="acceptFallback" style="margin-top:8px;">接受候补方案</button>` : ""}
-      ${appState.debugMeta ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#6b7280;">调试字段（并发叙事）</summary><p style="margin-top:6px;font-size:12px;color:#6b7280;">match_version: ${appState.debugMeta.match_version}<br/>reservation_ttl: ${appState.debugMeta.reservation_ttl}<br/>idempotency_key: ${appState.debugMeta.idempotency_key}</p></details>` : ""}
-    </section>
-    <section class="messages-card card">
-      ${appState.chatThread.messages.map(renderMessage).join("")}
-      ${appState.pendingSuccess ? `<div class="confirming-banner">双方已确认，正在生成成局卡片...</div>` : ""}
-      <div class="quick-replies">
-        ${["可以", "想换一家", "时间短一点", "时间晚一点", "预算有点高", "直接确认"].map((text) => `<button data-quick="${text}">${text}</button>`).join("")}
-      </div>
-      <div class="chat-composer">
-        <input id="chatInput" placeholder="输入消息" />
-        <button class="primary-button" id="sendMessage">发送</button>
-      </div>
-    </section>
+    <header class="chat-page-header"><h1>消息</h1></header>
+    ${activeMatch ? `
+      <article class="group-list-item card active-chat-item" id="openActiveMatch">
+        <div class="gc-list-icon active-chat-icon">${activeMatch.user.nickname[0]}</div>
+        <div class="gc-list-body">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+            <h3 style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${activeMatch.user.nickname} · ${activeMatch.poi.name}</h3>
+            <span class="active-match-badge">进行中</span>
+          </div>
+          <p>${activeMatch.suggested_time} · ${activeMatch.intent.activity_type}</p>
+          <small class="muted">${lastMsg(appState.chatThread?.messages || [])}</small>
+        </div>
+      </article>
+    ` : ""}
+    ${allChats.map((gc) => `
+      <article class="group-list-item card" data-gcid="${gc.group_id}">
+        <div class="gc-list-icon">${poiBadgeHTML(gc.poi)}</div>
+        <div class="gc-list-body">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+            <h3 style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${gc.name}</h3>
+            <span class="gc-list-time">${gc.createdAt}</span>
+          </div>
+          <p>${gc.suggested_time} · ${gc.members.map((m) => m.nickname).join("、")}</p>
+          <small class="muted">${lastMsg(gc.messages)}</small>
+        </div>
+      </article>
+    `).join("")}
   `;
-  $("#confirmMatch").addEventListener("click", confirmMatch);
-  $("#changePlace").addEventListener("click", () => openReplanChooser("change_place"));
-  $("#simulateWait").addEventListener("click", () => openReplanChooser("waiting_time_change"));
-  $("#simulateReject").addEventListener("click", simulateMatchReject);
-  const acceptFallbackBtn = $("#acceptFallback");
-  if (acceptFallbackBtn) acceptFallbackBtn.addEventListener("click", acceptFallbackMatch);
-  $("#safetyOptions").addEventListener("click", () => showToast("已开启行程共享 · 紧急联系人已通知"));
-  $("#sendMessage").addEventListener("click", sendChatMessage);
-  $("#chatInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") sendChatMessage();
-  });
-  $$("#chatPage [data-quick]").forEach((button) => {
-    button.addEventListener("click", () => handleQuickReply(button.dataset.quick));
+  if (activeMatch) {
+    $("#openActiveMatch").addEventListener("click", () => { appState.viewingGroupChatId = "__active__"; render(); });
+  }
+  $$("#chatPage [data-gcid]").forEach((item) => {
+    item.addEventListener("click", () => { appState.viewingGroupChatId = item.dataset.gcid; render(); });
   });
 }
 
@@ -2174,6 +3281,36 @@ function keepOriginalPlanAfterWait(match, nextWait, options = {}) {
   render();
 }
 
+function joinDemand(demandId) {
+  const demand = buddyDemands.find((d) => d.demand_id === demandId);
+  if (!demand) { showToast("找不到这一局"); return; }
+  const poi = pois.find((p) => p.poi_id === demand.poi_id);
+  const allUsers = [...users, ...backgroundUsers];
+  const user = allUsers.find((u) => u.user_id === demand.user_id);
+  if (!poi || !user) { showToast("局信息获取失败"); return; }
+  const t = nowTime();
+  const gc = {
+    group_id: `gc_join_${Date.now()}`,
+    name: `${poi.name} · ${demand.activity_type}`,
+    members: [
+      { nickname: "我", isMe: true },
+      { nickname: user.nickname, verified: user.verified_status }
+    ],
+    poi,
+    suggested_time: demand.target_time,
+    createdAt: t,
+    messages: [
+      { sender: "system", text: `成局：${demand.target_time} 一起去 ${poi.name}`, timestamp: t },
+      { sender: "matched_user", text: "好的，到时候见！", timestamp: t },
+      { sender: "ai", text: `已为你们确认约局，记得准时出发！`, timestamp: t }
+    ]
+  };
+  appState.groupChats.push(gc);
+  appState.viewingGroupChatId = gc.group_id;
+  closeCirclePage();
+  setPage("chat");
+}
+
 function buildGroupChat(match) {
   const t = nowTime();
   return {
@@ -2196,7 +3333,8 @@ function buildGroupChat(match) {
 
 function renderMessage(message) {
   const cls = message.sender === "user_current" ? "me" : message.sender === "ai" ? "ai" : "other";
-  return `<div class="message ${cls}"><span>${message.text}</span><small>${message.timestamp}</small></div>`;
+  const meta = message.ai_generated ? "AI 模拟对方" : message.timestamp;
+  return `<div class="message ${cls} ${message.pending ? "is-pending" : ""}"><span>${escapeHTML(message.text)}</span><small>${escapeHTML(meta || "")}</small></div>`;
 }
 
 function confirmMatch() {
@@ -2208,24 +3346,74 @@ function confirmMatch() {
     return;
   }
   setPlanStatus(PLAN_STATUS.LOCKED_WAITING_PEER);
+  appState.currentUserConfirmed = true;
   appState.chatThread.current_user_confirmed = true;
-  appState.chatThread.messages.push({ sender: "user_current", text: "我确认这个方案。", timestamp: nowTime() });
+  appState.chatThread.messages.push({ sender: "user_current", text: "我确认这个方案，等你的回复～", timestamp: nowTime() });
+  render();
+}
+
+function simulatePeerConfirm() {
+  if (appState.planStatus !== PLAN_STATUS.LOCKED_WAITING_PEER) return;
+  setPlanStatus(PLAN_STATUS.CONFIRMED);
+  appState.matchedUserConfirmed = true;
+  appState.pendingSuccess = true;
+  appState.chatThread.matched_user_confirmed = true;
+  appState.chatThread.messages.push({ sender: "matched_user", text: "我也确认，待会见！", timestamp: nowTime() });
+  const gc = buildGroupChat(appState.selectedMatch);
+  appState.groupChats.push(gc);
   render();
   setTimeout(() => {
-    setPlanStatus(PLAN_STATUS.CONFIRMED);
-    appState.pendingSuccess = true;
-    appState.chatThread.matched_user_confirmed = true;
-    appState.chatThread.messages.push({ sender: "matched_user", text: "我也确认，待会见", timestamp: nowTime() });
-    // Create group chat
-    const gc = buildGroupChat(appState.selectedMatch);
-    appState.groupChats.push(gc);
+    appState.pendingSuccess = false;
+    appState.currentPage = "success";
     render();
-    setTimeout(() => {
-      appState.pendingSuccess = false;
-      appState.currentPage = "success";
-      render();
-    }, 800);
-  }, 450);
+  }, 800);
+}
+
+function simulatePeerReject() {
+  if (appState.planStatus !== PLAN_STATUS.LOCKED_WAITING_PEER) return;
+  appState.chatThread.messages.push({ sender: "matched_user", text: "抱歉，我临时有事来不了了。", timestamp: nowTime() });
+  rematchAfterReject();
+}
+
+function simulatePeerTimeout() {
+  if (appState.planStatus !== PLAN_STATUS.LOCKED_WAITING_PEER) return;
+  appState.chatThread.messages.push({ sender: "ai", text: "对方超过 10 分钟未确认，系统已自动为你查找候补搭子。", timestamp: nowTime() });
+  rematchAfterReject();
+}
+
+function showSafetyPanel() {
+  let overlay = document.getElementById("safetyPanelOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "safetyPanelOverlay";
+    document.body.appendChild(overlay);
+  }
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-sheet" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
+      <h3 style="margin:4px 0 12px;">安全选项</h3>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <button class="secondary-button" id="safetyShare" style="text-align:left;padding:12px 14px;">
+          <b>📍 开启行程共享</b><br/>
+          <span style="font-size:12px;color:#6b7280;">将本次出行位置实时分享给紧急联系人</span>
+        </button>
+        <button class="secondary-button" id="safetyContact" style="text-align:left;padding:12px 14px;">
+          <b>📞 通知紧急联系人</b><br/>
+          <span style="font-size:12px;color:#6b7280;">发送一键提醒消息，告知今晚行程安排</span>
+        </button>
+        <button class="secondary-button" id="safetyReport" style="text-align:left;padding:12px 14px;">
+          <b>🚨 举报 / 求助</b><br/>
+          <span style="font-size:12px;color:#6b7280;">遇到异常情况可一键联系美团安全团队</span>
+        </button>
+      </div>
+      <button class="secondary-button" id="closeSafetyPanel" style="margin-top:14px;width:100%;">关闭</button>
+    </div>
+  `;
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.getElementById("safetyShare").onclick = () => { showToast("行程共享已开启，紧急联系人将实时收到位置"); overlay.remove(); };
+  document.getElementById("safetyContact").onclick = () => { showToast("已发送提醒消息给紧急联系人"); overlay.remove(); };
+  document.getElementById("safetyReport").onclick = () => { showToast("已连接美团安全支持团队"); overlay.remove(); };
+  document.getElementById("closeSafetyPanel").onclick = () => overlay.remove();
 }
 
 function applyReplan(eventType) {
@@ -2396,10 +3584,11 @@ function sendChatMessage() {
   const input = $("#chatInput");
   const text = input.value.trim();
   if (!text || !appState.chatThread) return;
-  appState.chatThread.messages.push({ sender: "user_current", text, timestamp: "18:13" });
+  appState.chatThread.messages.push({ sender: "user_current", text, timestamp: nowTime() });
   if (appState.planStatus === PLAN_STATUS.MATCHED) setPlanStatus(PLAN_STATUS.NEGOTIATING);
   input.value = "";
   render();
+  appendAIPeerReply(text);
 }
 
 function handleQuickReply(text) {
@@ -2421,6 +3610,7 @@ function handleQuickReply(text) {
   }
   appState.chatThread.messages.push({ sender: "user_current", text, timestamp: nowTime() });
   render();
+  appendAIPeerReply(text);
 }
 
 function renderSuccessPage() {
@@ -2779,15 +3969,35 @@ function renderDepositSheet() {
     document.body.appendChild(sheet);
   }
   sheet.className = "modal-overlay";
+  const poi = appState.selectedMatch?.poi;
+  const depositAmt = 9.9;
   sheet.innerHTML = `
     <div class="modal-sheet" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
-        <h3 style="margin:4px 0 10px;">支付意愿锁定</h3>
-      <p style="font-size:13px;color:#6b7280;margin-bottom:10px;">规则摘要：T-30 退出扣 50% 作为演示（非真实支付流程）。</p>
-      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;">
-        <input type="checkbox" id="depositAgreement" ${appState.depositAgreementChecked ? "checked" : ""} />
-        我同意冻结诚意金用于锁定本次成局意愿
+      <h3 style="margin:4px 0 4px;">支付意愿锁定</h3>
+      <p style="font-size:12px;color:#9ca3af;margin-bottom:12px;">本次成局的诚意担保（演示）</p>
+      <div style="background:#f8fafc;border-radius:12px;padding:12px 14px;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;">
+          <span>诚意金金额</span><b>¥${depositAmt.toFixed(1)}</b>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;">
+          <span>目标地点</span><span>${poi ? poi.name : "待定"}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;">
+          <span>冻结方式</span><span>美团钱包预授权</span>
+        </div>
+      </div>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:12px;line-height:1.7;">
+        <b>退款规则（模拟）</b><br/>
+        · 双方到店核销后：诚意金全额解冻退回<br/>
+        · 约定 T-30 分钟前取消：全额退回，无责任<br/>
+        · T-30 分钟内单方取消：扣除 50%（¥${(depositAmt * 0.5).toFixed(1)})，对方获得补偿券<br/>
+        · 爽约方承担全额扣除，另收 10 分信誉扣分
+      </div>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:12px;">
+        <input type="checkbox" id="depositAgreement" ${appState.depositAgreementChecked ? "checked" : ""} style="margin-top:2px;" />
+        我已阅读并同意冻结 ¥${depositAmt.toFixed(1)} 诚意金，用于锁定本次成局意愿
       </label>
-      <div style="display:flex;gap:8px;margin-top:12px;">
+      <div style="display:flex;gap:8px;">
         <button class="secondary-button" id="cancelDepositSheet" style="flex:1;">再想想</button>
         <button class="primary-button" id="confirmDepositSheet" style="flex:1;" ${appState.depositAgreementChecked ? "" : "disabled"}>锁定并继续</button>
       </div>

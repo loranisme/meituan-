@@ -2,57 +2,71 @@
   function parseIntent(input) {
     const text = String(input || "").trim();
     let activity_type = "饭搭子";
-    let category_preference = "韩餐";
+    let category_preference = "餐饮";
+    let category_explicit = false;
     const parseSignals = [];
 
     if (/KTV|ktv|唱歌|K歌|欢唱/.test(text)) {
       activity_type = "KTV搭子";
       category_preference = "KTV";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/酒吧|小酌|喝酒|微醺|鸡尾酒/.test(text)) {
       activity_type = "酒吧搭子";
       category_preference = "酒吧";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/咖啡|学习|安静|拿铁|手冲/.test(text)) {
       activity_type = "咖啡搭子";
       category_preference = "咖啡";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/夜宵|烧烤|深夜|烤串|炸鸡/.test(text)) {
       activity_type = "夜宵搭子";
       category_preference = /烧烤|烤串/.test(text) ? "烧烤" : "夜宵";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/跑团|TRPG|克苏鲁|剧本杀|模组|地下城|DND|D&D/.test(text)) {
       activity_type = "跑团搭子";
       category_preference = "跑团";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/RPG|美式桌游|角色扮演|龙与地下城/.test(text)) {
       activity_type = "RPG桌游搭子";
       category_preference = "RPG";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/狼人|阿瓦隆|聚会桌游|UNO|卡牌局/.test(text)) {
       activity_type = "聚会桌游搭子";
       category_preference = "聚会桌游";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/桌游|board\s*game/i.test(text)) {
       activity_type = "桌游搭子";
       category_preference = "聚会桌游";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/攀岩|抱石|岩馆|攀登|顶绳/.test(text)) {
       activity_type = "攀岩搭子";
       category_preference = /抱石/.test(text) ? "抱石" : /新手|体验|入门/.test(text) ? "新手体验" : "运动攀岩";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/骑行|骑车|夜骑|自行车|单车|公路车/.test(text)) {
       activity_type = "骑行搭子";
       category_preference = /夜骑/.test(text) ? "夜骑路线" : /郊野|长途|越野/.test(text) ? "郊野骑行" : "休闲骑行";
+      category_explicit = true;
       parseSignals.push("activity");
     } else if (/火锅/.test(text)) {
       category_preference = "火锅";
+      category_explicit = true;
       parseSignals.push("category");
     } else if (/韩餐|韩国|部队锅|豆腐汤|拌饭/.test(text)) {
       category_preference = "韩餐";
+      category_explicit = true;
       parseSignals.push("category");
     } else if (/日料|寿司|拉面/.test(text)) {
       category_preference = "日料";
+      category_explicit = true;
       parseSignals.push("category");
     }
 
@@ -83,6 +97,7 @@
     return {
       activity_type,
       category_preference,
+      category_explicit,
       budget_min: Math.max(5, budget - 10),
       budget_max: budget,
       social_style,
@@ -131,12 +146,17 @@
   function calculatePlaceScore(intent, poi) {
     const distance = clamp(100 - (poi.distance_km / Math.max(intent.distance_tolerance_km, 0.6)) * 30, 25, 100);
     const price = poi.avg_price <= intent.budget_max ? 100 : clamp(100 - (poi.avg_price - intent.budget_max) * 5, 20, 82);
-    const category = poi.sub_category === intent.category_preference || poi.tags.includes(intent.category_preference) ? 100 : poi.category === intent.category_preference ? 88 : activityMatchesPoi(intent.activity_type, poi) ? 78 : 35;
+    const exactMatch = poi.sub_category === intent.category_preference || poi.tags.includes(intent.category_preference);
+    const broadMatch = poi.category === intent.category_preference;
+    const activityMatch = activityMatchesPoi(intent.activity_type, poi);
+    // When user explicitly stated a category, a mismatch is a near-hard constraint violation
+    const categoryMismatch = !exactMatch && !broadMatch && !activityMatch;
+    const category = exactMatch ? 100 : broadMatch ? 88 : activityMatch ? (intent.category_explicit ? 62 : 78) : (intent.category_explicit ? 15 : 35);
     const wait = clamp(100 - poi.wait_time_min * 3, 25, 100);
     const rating = clamp((poi.rating / 5) * 100, 60, 100);
     const heat = clamp(poi.hot_score, 30, 100);
     const total = Math.round(distance * 0.25 + price * 0.2 + category * 0.2 + wait * 0.15 + rating * 0.1 + heat * 0.1);
-    return { total, breakdown: { distance: Math.round(distance), price: Math.round(price), category: Math.round(category), wait: Math.round(wait), rating: Math.round(rating), heat: Math.round(heat) } };
+    return { total, breakdown: { distance: Math.round(distance), price: Math.round(price), category: Math.round(category), wait: Math.round(wait), rating: Math.round(rating), heat: Math.round(heat) }, categoryMismatch };
   }
 
   function computeReputationScore(user) {
@@ -157,8 +177,13 @@
       .map((user) => ({ user, score: calculateUserMatchScore(intent, user) }))
       .filter(({ score }) => score.total >= 50)
       .sort((a, b) => b.score.total - a.score.total);
-    const placeCandidates = pois
-      .filter((poi) => activityMatchesPoi(intent.activity_type, poi) || poi.sub_category === intent.category_preference || poi.tags.includes(intent.category_preference))
+    // When category is explicit, first try strict match; widen to activity match only if < 3 results
+    const strictFilter = (poi) => poi.sub_category === intent.category_preference || poi.category === intent.category_preference || poi.tags.includes(intent.category_preference);
+    const broadFilter = (poi) => activityMatchesPoi(intent.activity_type, poi);
+    const poisFiltered = intent.category_explicit
+      ? (pois.filter(strictFilter).length >= 3 ? pois.filter(strictFilter) : pois.filter((p) => strictFilter(p) || broadFilter(p)))
+      : pois.filter((poi) => broadFilter(poi) || strictFilter(poi));
+    const placeCandidates = poisFiltered
       .map((poi) => ({ poi, score: calculatePlaceScore(intent, poi) }))
       .sort((a, b) => b.score.total - a.score.total);
     if (!userCandidates.length || !placeCandidates.length) return [];
@@ -189,7 +214,17 @@
   }
 
   function generateExplanation(intent, user, poi, score_breakdown, totalScore) {
-    return `你和 ${user.nickname} 匹配度为 ${totalScore || score_breakdown.total || 89}%。你们预算接近，都偏好${intent.category_preference}，并且都选择${intent.social_style}模式，因此适合一起去 ${poi.name}。`;
+    const score = totalScore || score_breakdown.total || 89;
+    const poiCategory = poi.sub_category || poi.category || "该场地";
+    const userLikesPoi = user.preferred_categories.includes(poi.sub_category) || user.interest_labels.includes(poi.sub_category);
+    const categoryNote = intent.category_explicit
+      ? (poi.sub_category === intent.category_preference || poi.category === intent.category_preference
+          ? `地点符合你的 ${intent.category_preference} 偏好`
+          : `推荐 ${poiCategory} 类场地，与你的偏好接近`)
+      : `推荐 ${poiCategory} 场地`;
+    const userNote = userLikesPoi ? `，${user.nickname} 也偏好这类场所` : `，${user.nickname} 评分较高`;
+    const styleNote = intent.social_style === user.social_style ? `，社交风格一致（${intent.social_style}）` : "";
+    return `你和 ${user.nickname} 匹配度为 ${score}%。${categoryNote}${userNote}${styleNote}，因此推荐一起去 ${poi.name}。`;
   }
 
   function replanMatch(selectedMatch, eventType, pois) {
@@ -209,7 +244,7 @@
       poi: newPoi,
       backup_poi: findBackupPoi(intent, newPoi, pois),
       suggested_time: intent.target_time === "周末" ? "周末 15:45" : intent.target_time === "现在" ? "现在 + 10 分钟" : "今晚 18:40",
-      replanning_notice: `${actionText}AI 推荐切换到 ${newPoi.name}，人均 $${newPoi.avg_price}，等待约 ${newPoi.wait_time_min} 分钟。`
+      replanning_notice: `${actionText}AI 推荐切换到 ${newPoi.name}，人均 ¥${newPoi.avg_price}，等待约 ${newPoi.wait_time_min} 分钟。`
     };
   }
 

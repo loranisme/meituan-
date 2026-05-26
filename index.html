@@ -111,6 +111,9 @@
         .location-pill {
           @apply w-full flex items-center gap-2.5 bg-white rounded-2xl border border-line px-3.5 py-3 text-left shadow-card;
         }
+        .location-pill[hidden] {
+          display: none !important;
+        }
         .loc-pin {
           @apply w-9 h-9 rounded-xl bg-brand grid place-items-center shrink-0;
         }
@@ -191,6 +194,24 @@
         }
         .text-button {
           @apply bg-white border border-line rounded-lg px-3 py-2 font-medium whitespace-nowrap text-ink;
+        }
+        .adjust-row {
+          @apply flex gap-1.5 flex-wrap mt-2;
+        }
+        .adjust-row .text-button {
+          @apply text-[12px] py-1.5 px-2.5;
+        }
+        .agent-clarify-card {
+          @apply bg-white border-2 border-brand rounded-2xl p-3.5 mb-3 shadow-card;
+        }
+        .agent-clarify-card .agent-q {
+          @apply text-[14px] font-bold text-ink mb-2;
+        }
+        .agent-clarify-card .clarify-chips {
+          @apply flex flex-wrap gap-2;
+        }
+        .agent-clarify-card .clarify-chip {
+          @apply bg-brand/20 border border-brand/50 rounded-full px-3 py-1.5 text-[13px] font-semibold text-brand-ink cursor-pointer;
         }
 
         /* ---------- Filter chips ---------- */
@@ -451,6 +472,9 @@
         }
         .message.ai span {
           @apply bg-surface border border-line text-ink/90;
+        }
+        .message.is-pending span {
+          @apply opacity-55 italic;
         }
         .confirming-banner {
           @apply my-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200 font-bold text-center;
@@ -756,6 +780,24 @@
           padding: 5px 12px;
         }
 
+        .chat-page-header {
+          @apply px-4 pt-4 pb-2;
+        }
+        .chat-page-header h1 {
+          @apply text-[20px] font-bold;
+        }
+        .active-chat-item {
+          @apply border-l-4 border-brand;
+        }
+        .active-chat-icon {
+          @apply bg-brand text-brand-ink font-bold text-base;
+        }
+        .active-match-badge {
+          @apply text-[11px] font-semibold rounded-full px-2 py-0.5 whitespace-nowrap shrink-0;
+          background: #FFF3CC;
+          color: #92700A;
+        }
+
         /* ---------- Success secondary ---------- */
         .success-secondary-row {
           @apply grid grid-cols-3 gap-2 mt-2;
@@ -972,6 +1014,9 @@
         .circle-live-avatar {
           @apply w-9 h-9 rounded-full bg-brand text-brand-ink grid place-items-center font-bold text-sm shrink-0;
         }
+        .circle-demand-icon {
+          @apply w-9 h-9 rounded-xl bg-[#FFF4ED] grid place-items-center text-lg shrink-0;
+        }
         .radius-row {
           @apply flex gap-2 mt-3;
         }
@@ -1047,11 +1092,6 @@
         }
         .circle-inspire b { @apply text-[14px] block; }
         .circle-inspire span { @apply text-[12px] text-muted mt-1 block; }
-        .circle-invite {
-          @apply rounded-2xl p-4 mt-3 mb-2 text-center;
-          background: linear-gradient(135deg, #fff8e6 0%, #fff0f5 100%);
-          border: 1px dashed #ffd100;
-        }
         .circle-vibe-row {
           @apply flex items-center gap-2 mt-2 text-[12px] text-muted;
         }
@@ -1129,8 +1169,17 @@
       </button>
     </nav>
 
+    <!-- 高德地图配置：填入 Key 后自动启用真实地图；留空则使用平面示意地图（不影响演示） -->
+    <script>
+      window.AMAP_KEY = ""; // 在此填入高德前端 JS API Key
+      if (window.AMAP_KEY) {
+        var _s = document.createElement("script");
+        _s.src = "https://webapi.amap.com/maps?v=2.0&key=" + window.AMAP_KEY + "&plugin=AMap.HeatMap";
+        document.head.appendChild(_s);
+      }
+    </script>
     <script src="./mockData.js?v=20260522a"></script>
     <script src="./utils/matching.js?v=20260519a"></script>
-    <script src="./app.js?v=20260522d"></script>
+    <script src="./app.js?v=20260525agent"></script>
   </body>
 </html>

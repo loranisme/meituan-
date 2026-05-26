@@ -20,6 +20,7 @@ AI_MATCH_SCHEMA = {
     "additionalProperties": False,
     "required": [
         "intent_patch",
+        "agent_profile",
         "director_brief",
         "clarifying_questions",
         "plan_overrides",
@@ -51,6 +52,24 @@ AI_MATCH_SCHEMA = {
                 "target_time": {"type": "string"},
                 "distance_tolerance_km": {"type": "number"},
                 "confidence": {"type": "number"},
+            },
+        },
+        "agent_profile": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "mood_label",
+                "user_state",
+                "activity_strategy",
+                "confidence",
+                "score_basis",
+            ],
+            "properties": {
+                "mood_label": {"type": "string"},
+                "user_state": {"type": "string"},
+                "activity_strategy": {"type": "string"},
+                "confidence": {"type": "number"},
+                "score_basis": {"type": "string"},
             },
         },
         "director_brief": {"type": "string"},
@@ -108,6 +127,18 @@ AI_MATCH_SCHEMA = {
 }
 
 
+CHAT_REPLY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["reply", "intent", "confidence"],
+    "properties": {
+        "reply": {"type": "string"},
+        "intent": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+}
+
+
 def to_openapi_schema(schema):
     if isinstance(schema, list):
         return [to_openapi_schema(item) for item in schema]
@@ -140,8 +171,28 @@ DEVELOPER_PROMPT = """
 2. 保留本地规则评分作为真相源；你只增强意图理解、解释、风险预判和演示话术。
 3. 明确区分真实字段、模拟字段、生成字段，让答辩时能解释数据层。
 4. 输出中文短句，适合直接展示在手机 UI 上。
-5. 强调“成局”而不是泛社交聊天：时间、地点、参与者、团购/到店转化、异常兜底。
+5. 强调"成局"而不是泛社交聊天：时间、地点、参与者、团购/到店转化、异常兜底。
 6. 非餐饮场景（攀岩/骑行/桌游）优先引用 venue_extra 类信息：难度、路线、包厢时长等。
+7. 需要理解 NLP 和情绪信号。比如"今天心情不好"应识别为低能量/低压力陪伴，
+   优先给近距离、低等待、1v1 或小组安静活动，并解释 AI 评分依据。
+8. agent_profile 要写清用户状态、活动策略和评分依据，不要像筛选器一样只复述字段。
+"""
+
+
+CHAT_PROMPT = """
+你在美团本地生活搭子 demo 里扮演"对方用户"，模拟真实聊天回复。
+
+[通用规则]
+1. 用中文短句，20 字以内优先，语气像真实年轻用户。
+2. 不要输出 emoji，不要夸张，不要恋爱化，不要暴露自己是 AI。
+3. 不要引导私聊，不要说"好的，明白"等客服式语气。
+
+[根据 mode 字段区分场景]
+- mode = "matched_user_demo"（成局前协商阶段）：
+  聚焦时间、地点、预算、等待是否确认；对方确认时自然顺势确认。
+- mode = "group_chat_post_success"（成局后群聊阶段）：
+  已确认见面，聊天内容围绕：出发时间、是否在路上、到店情况、实际体验。
+  模拟真实搭子到店前后的协调对话，语气自然随意。
 """
 
 
@@ -227,7 +278,7 @@ def call_deepseek(client_payload):
                 "content": (
                     "请基于以下 JSON 输入生成 AI 成局导演结果，"
                     "只返回一个 JSON 对象，字段需包含 intent_patch, director_brief, "
-                    "clarifying_questions, plan_overrides, merchant_layer, demo_hooks。\n"
+                    "agent_profile, clarifying_questions, plan_overrides, merchant_layer, demo_hooks。\n"
                     f"{json.dumps(client_payload, ensure_ascii=False)}"
                 ),
             },
@@ -322,6 +373,118 @@ def call_llm(client_payload):
     raise RuntimeError("Set DEEPSEEK_API_KEY or GEMINI_API_KEY in .env to enable /api/ai-match")
 
 
+def call_deepseek_chat(client_payload):
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not set")
+
+    model = os.environ.get("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL).strip() or DEFAULT_DEEPSEEK_MODEL
+    body = {
+        "model": model,
+        "temperature": 0.45,
+        "max_tokens": 800,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": CHAT_PROMPT.strip()},
+            {
+                "role": "user",
+                "content": (
+                    "请基于以下 JSON 输入模拟对方用户回复，"
+                    "只返回 JSON：reply, intent, confidence。\n"
+                    f"{json.dumps(client_payload, ensure_ascii=False)}"
+                ),
+            },
+        ],
+    }
+    req = request.Request(
+        DEEPSEEK_URL,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=18, context=https_context()) as resp:
+            raw = resp.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"DeepSeek chat API error {exc.code}: {detail[:500]}") from exc
+
+    payload = json.loads(raw)
+    choices = payload.get("choices") or []
+    if not choices:
+        raise RuntimeError("DeepSeek chat response had no choices")
+    text = (choices[0].get("message") or {}).get("content") or ""
+    return parse_llm_json(text.strip())
+
+
+def call_gemini_chat(client_payload):
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+    body = {
+        "systemInstruction": {
+            "parts": [{"text": CHAT_PROMPT.strip()}],
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            "请基于以下 JSON 输入模拟对方用户回复，"
+                            "只能返回符合 generationConfig.responseSchema 的 JSON。\n"
+                            f"{json.dumps(client_payload, ensure_ascii=False)}"
+                        )
+                    }
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.45,
+            "maxOutputTokens": 800,
+            "responseMimeType": "application/json",
+            "responseSchema": to_openapi_schema(CHAT_REPLY_SCHEMA),
+        },
+    }
+    req = request.Request(
+        GEMINI_URL_TEMPLATE.format(model=model),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=18, context=https_context()) as resp:
+            raw = resp.read().decode("utf-8")
+    except error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini chat API error {exc.code}: {detail[:500]}") from exc
+
+    payload = json.loads(raw)
+    text = extract_gemini_text(payload)
+    if not text:
+        block_reason = payload.get("promptFeedback", {}).get("blockReason")
+        suffix = f": {block_reason}" if block_reason else ""
+        raise RuntimeError(f"Gemini chat response did not include output text{suffix}")
+    return parse_llm_json(text)
+
+
+def call_chat_llm(client_payload):
+    provider = active_llm_provider()
+    if provider == "deepseek":
+        return call_deepseek_chat(client_payload)
+    if provider == "gemini":
+        return call_gemini_chat(client_payload)
+    raise RuntimeError("Set DEEPSEEK_API_KEY or GEMINI_API_KEY in .env to enable /api/chat-reply")
+
+
 class Handler(SimpleHTTPRequestHandler):
     def translate_path(self, path):
         clean = path.split("?", 1)[0].split("#", 1)[0].lstrip("/")
@@ -345,20 +508,28 @@ class Handler(SimpleHTTPRequestHandler):
             return
         return SimpleHTTPRequestHandler.do_GET(self)
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.end_headers()
+
     def do_POST(self):
-        if self.path.split("?", 1)[0] != "/api/ai-match":
+        route = self.path.split("?", 1)[0]
+        if route not in {"/api/ai-match", "/api/chat-reply"}:
             json_response(self, 404, {"error": "not found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             client_payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = call_llm(client_payload)
+            result = call_llm(client_payload) if route == "/api/ai-match" else call_chat_llm(client_payload)
             json_response(self, 200, {**result, "provider": active_llm_provider()})
         except Exception as exc:
             json_response(self, 503, {"error": str(exc), "fallback": True})
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         super().end_headers()
 
 

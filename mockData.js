@@ -13,6 +13,9 @@ const mockData = (() => {
     ]
   };
 
+  // UCLA/Westwood 中心坐标（GCJ-02，高德地图坐标系）
+  const MAP_CENTER = { lat: 34.0629, lng: -118.4452 };
+
   /** 可切换的生活圈（演示：不同范围/主题筛店） */
   const lifeCircles = [
     {
@@ -22,6 +25,8 @@ const mockData = (() => {
       tagline: "以你为中心约 2km · 日常最常逛",
       vibe: "慢节奏",
       radius_km: 2,
+      center_lat: MAP_CENTER.lat,
+      center_lng: MAP_CENTER.lng,
       accent: "#FF6B35",
       tint: "#FFF8E6",
       matchTags: ["下班顺路", "一个人也行", "步行就到"],
@@ -36,6 +41,8 @@ const mockData = (() => {
       tagline: "餐厅 · 咖啡 · 夜宵 · 酒吧",
       vibe: "烟火气",
       radius_km: 3,
+      center_lat: MAP_CENTER.lat,
+      center_lng: MAP_CENTER.lng,
       trends: ["人均 80 内", "排队别太久", "小酌一杯"],
       accent: "#FF2442",
       tint: "#FFF0F0",
@@ -50,6 +57,8 @@ const mockData = (() => {
       tagline: "KTV · 桌游 · 周末局更多",
       vibe: "热闹劲",
       radius_km: 4,
+      center_lat: MAP_CENTER.lat,
+      center_lng: MAP_CENTER.lng,
       trends: ["周末开嗓", "狼人 4 人局", "包厢别太贵"],
       accent: "#8B5CF6",
       tint: "#F5F0FF",
@@ -64,6 +73,8 @@ const mockData = (() => {
       tagline: "攀岩 · 骑行 · 户外轻社交",
       vibe: "透口气",
       radius_km: 5,
+      center_lat: MAP_CENTER.lat,
+      center_lng: MAP_CENTER.lng,
       trends: ["新手友好抱石", "休闲骑 10km", "户外拍照走走"],
       accent: "#2F7EF7",
       tint: "#EFF5FF",
@@ -182,8 +193,11 @@ const mockData = (() => {
     hot_score,
     x,
     y,
+    // 真实地图坐标：以 UCLA/Westwood 为中心，由 x/y 示意百分比换算（GCJ-02）
+    lng: Number((MAP_CENTER.lng + (x - 50) / 50 * 0.022).toFixed(6)),
+    lat: Number((MAP_CENTER.lat - (y - 50) / 50 * 0.018).toFixed(6)),
     map_zone: category === "攀岩" || category === "骑行" ? "运动区" : category === "桌游" ? "桌游区" : category === "KTV" || category === "酒吧" ? "文娱区" : "餐饮区",
-    cover_image: `https://picsum.photos/seed/${encodeURIComponent(poi_id)}/800/480`,
+    cover_image: `./assets/merchants/${poi_id}.jpg`,
     address: `${area} · ${sub_category}`,
     business_hours: wait_time_min > 20 ? "11:00-23:00" : category === "攀岩" ? "10:00-22:00" : category === "骑行" ? "08:00-21:00" : category === "桌游" ? "12:00-24:00" : "10:00-22:00",
     venue_extra: buildVenueExtra(category, sub_category, tags)
@@ -481,7 +495,7 @@ const mockData = (() => {
       budget_max: poi.avg_price + 10,
       social_style: poi.suitable_social_styles[index % poi.suitable_social_styles.length],
       group_size,
-      note: `${target_time} 想去 ${poi.name}，偏好${poi.suitable_social_styles[0]}，预算 $${Math.max(8, poi.avg_price - 8)}-$${poi.avg_price + 10}。`,
+      note: `${target_time} 想去 ${poi.name}，偏好${poi.suitable_social_styles[0]}，预算 ¥${Math.max(8, poi.avg_price - 8)}-¥${poi.avg_price + 10}。`,
       status: index % 11 === 0 ? "matched" : "waiting",
       created_at: `2026-05-08 ${String(16 + (index % 5)).padStart(2, "0")}:${String((index * 7) % 60).padStart(2, "0")}`
     };
