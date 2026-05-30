@@ -40,6 +40,20 @@ const PLAN_STATUS_META = Object.freeze({
   [PLAN_STATUS.FALLBACK_READY]: { label: "候补方案已就绪", progress: 55 }
 });
 
+const DEMO_AGENT_MEMORY = {
+  preferred_scenes: ["韩餐", "咖啡", "轻运动"],
+  default_budget_range: [60, 90],
+  distance_preference_km: 1.5,
+  social_preference: "低打扰 1v1",
+  avoid_conditions: ["等待超过 15 分钟", "太嘈杂的多人拼桌局"],
+  deal_preference: "帮你省钱、单人套餐优先",
+  learned_from: {
+    recent_views: ["韩餐", "咖啡", "汤锅"],
+    accepted_plans: ["Seoul Bowl 韩式简餐", "Powell Coffee"],
+    rejected_reasons: ["太远", "太嘈杂", "预算太高"]
+  }
+};
+
 const appState = {
   currentPage: "map",
   selectedCategory: "全部",
@@ -86,7 +100,10 @@ const appState = {
   selectedCircleId: lifeCircles[0]?.id || "near",
   circlePageOpen: false,
   browseRadiusKm: 2,
-  circleTimeSlot: "now"
+  circleTimeSlot: "now",
+  agentMemory: null,
+  agentMemoryNotice: "",
+  agentFeedbackLog: []
 };
 
 window.appState = appState;
@@ -226,6 +243,7 @@ function init() {
       ]
     };
   });
+  appState.agentMemory = JSON.parse(JSON.stringify(DEMO_AGENT_MEMORY));
   updateAreaPill();
   bindAreaPill();
   $("#resetDemo").addEventListener("click", () => location.reload());
@@ -323,6 +341,23 @@ function rerunMatching(options = {}) {
     logConcurrencyMeta(concurrency);
     return { ...result, intent: appState.parsedIntent, concurrency };
   });
+  // P2: memory-based lightweight re-ranking (+/- 3 pts on total_score)
+  const mem = appState.agentMemory;
+  if (mem && results.length > 1) {
+    results = results.map((r) => {
+      let delta = 0;
+      const cat = r.poi.sub_category || r.poi.category || "";
+      if (mem.preferred_scenes.some((s) => cat.includes(s) || s.includes(cat))) delta += 3;
+      if (r.poi.distance_km <= mem.distance_preference_km) delta += 3;
+      const avoidWait = mem.avoid_conditions.find((c) => /等待/.test(c));
+      if (avoidWait && r.poi.wait_time_min < (parseInt(avoidWait) || 15)) delta += 3;
+      const rejected = mem.learned_from.rejected_reasons || [];
+      if (rejected.some((rr) => cat.includes(rr) || rr.includes(cat))) delta -= 3;
+      if (rejected.includes("太远") && r.poi.distance_km > mem.distance_preference_km + 0.5) delta -= 3;
+      if (delta === 0) return r;
+      return { ...r, total_score: Math.min(100, Math.max(0, r.total_score + delta)), _memoryDelta: delta };
+    }).sort((a, b) => b.total_score - a.total_score);
+  }
   appState.matchResults = results;
   appState.generatedPlan = results[0] || null;
   appState.debugMeta = appState.generatedPlan ? appState.generatedPlan.concurrency : appState.debugMeta;
@@ -486,6 +521,10 @@ function flatMapZonesHTML(classPrefix = "", options = {}) {
   const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
   const radiusSize = browseRadiusVisualSize();
   return `
+    <div class="${p}map-zone zone-dining" aria-hidden="true"></div>
+    <div class="${p}map-zone zone-play" aria-hidden="true"></div>
+    <div class="${p}map-zone zone-sport" aria-hidden="true"></div>
+    <div class="${p}map-zone zone-night" aria-hidden="true"></div>
     <div class="${p}map-grid" aria-hidden="true"></div>
     <div class="${p}map-road road-main" aria-hidden="true"></div>
     <div class="${p}map-road road-cross" aria-hidden="true"></div>
@@ -493,9 +532,15 @@ function flatMapZonesHTML(classPrefix = "", options = {}) {
     <div class="${p}map-road road-lower" aria-hidden="true"></div>
     <div class="${p}map-road road-diagonal-a" aria-hidden="true"></div>
     <div class="${p}map-road road-diagonal-b" aria-hidden="true"></div>
+    <div class="${p}map-road road-secondary-a" aria-hidden="true"></div>
+    <div class="${p}map-road road-secondary-b" aria-hidden="true"></div>
     <span class="${p}map-place-label label-westwood">主街</span>
     <span class="${p}map-place-label label-campus">校园侧</span>
     <span class="${p}map-place-label label-riverside">河岸路</span>
+    <span class="${p}map-zone-label zone-label-dining" aria-hidden="true">🍜 餐饮区</span>
+    <span class="${p}map-zone-label zone-label-play" aria-hidden="true">🎮 玩乐区</span>
+    <span class="${p}map-zone-label zone-label-sport" aria-hidden="true">🧗 运动区</span>
+    <span class="${p}map-zone-label zone-label-night" aria-hidden="true">🌙 夜生活</span>
     ${pulse}
     <div class="user-location-pin map-user-pin" style="left:${userPin.x}%;top:${userPin.y}%"></div>
     <div class="user-radius" data-radius-km="${currentBrowseRadiusKm()}" style="left:${userPin.x}%;top:${userPin.y}%;width:${radiusSize}%;height:${radiusSize}%">${rangeLabelHTML()}</div>
@@ -520,11 +565,27 @@ function miniMapPinsHTML(poiList) {
   }).join("");
 }
 
+function isHotPoi(poi) {
+  return Number(poi.hot_score || 0) > 80 || Number(poi.buddy_demand_count || 0) >= 7;
+}
+
 function pinSummaryHTML(poi, matchScore) {
+  if (matchScore) {
+    return `
+      <span class="pin-ai-score">AI ${matchScore}</span>
+      <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
+      <span class="pin-name">${escapeHTML(poi.name)}</span>
+    `;
+  }
+  if (isHotPoi(poi)) {
+    return `
+      <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
+      <em>热</em>
+      <span class="pin-name">${escapeHTML(poi.name)}</span>
+    `;
+  }
   return `
     <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
-    ${poi.hot_score > 80 ? "<em>热</em>" : ""}
-    ${matchScore ? `<span class="pin-match">${matchScore}%</span>` : ""}
     <span class="pin-name">${escapeHTML(poi.name)}</span>
   `;
 }
@@ -1477,19 +1538,37 @@ function renderMockMapPins() {
   if (!layer) return;
   const matchScoreMap = {};
   appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
-  layer.innerHTML = gaodePOIs.map((poi, index) => {
-    const isHot = poi.hot_score > 80;
-    const isSelected = poi.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id);
+  const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
+  const selectedPoi = appState.selectedPOI;
+  // SVG route connector from user pin to selected POI
+  let routeSVG = "";
+  if (selectedPoi) {
+    const spx = selectedPoi.mapX != null ? selectedPoi.mapX : poiMapPercent(selectedPoi).x;
+    const spy = selectedPoi.mapY != null ? selectedPoi.mapY : poiMapPercent(selectedPoi).y;
+    const walkMin = Math.max(2, Math.round((selectedPoi.distance_km || 0.8) * 12));
+    routeSVG = `
+      <svg class="map-route-svg" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;">
+        <line x1="${userPin.x}%" y1="${userPin.y}%" x2="${spx}%" y2="${spy}%"
+          stroke="#FFE033" stroke-width="2.5" stroke-dasharray="6 4"
+          stroke-linecap="round" opacity="0.85"/>
+      </svg>
+      <div class="map-route-dist" style="left:${(userPin.x + spx) / 2}%;top:${(userPin.y + spy) / 2}%;">步行约 ${walkMin} 分钟</div>
+    `;
+  }
+  layer.innerHTML = routeSVG + gaodePOIs.map((poi, index) => {
+    const isHot = isHotPoi(poi);
+    const isSelected = poi.poi_id === (selectedPoi && selectedPoi.poi_id);
     const matchScore = matchScoreMap[poi.poi_id];
-    const sizeClass = poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
+    const isAI = Boolean(matchScore);
+    const sizeClass = isAI ? "pin-lg" : poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
     const x = poi.mapX != null ? poi.mapX : poiMapPercent(poi).x;
     const y = poi.mapY != null ? poi.mapY : poiMapPercent(poi).y;
     const g = poiPhotoGradient(poi);
     return `
-      <button type="button" class="map-pin pin-enter ${isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}"
+      <button type="button" class="map-pin pin-enter ${isAI ? "is-ai" : isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}"
         data-poi-id="${poi.poi_id}" data-category="${poi.category}"
         style="left:${x}%;top:${y}%;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 6) * 0.16}s"
-        title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约"
+        title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约${matchScore ? ` · AI ${matchScore}分` : ""}"
         aria-label="${escapeHTML(poi.name)}，${escapeHTML(poi.category)}，${poi.buddy_demand_count} 人想约">
         ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
         ${pinSummaryHTML(poi, matchScore)}
@@ -1563,17 +1642,22 @@ function drawHeatOnCanvas(canvasEl, poiList, slotMult) {
 
   poiList.forEach((poi, i) => {
     const density = poiDensityBoost(poi, poiList);
-    const intensity = clampNumber((weights[i] / maxW) * (0.78 + density * 0.08) * slotMult, 0, 1);
-    if (intensity < 0.06) return;
+    const isHot = isHotPoi(poi);
+    // Hot POIs get boosted intensity to create concentrated "hot zones"
+    const hotBoost = isHot ? 1.32 : 0.72;
+    const intensity = clampNumber((weights[i] / maxW) * (0.78 + density * 0.08) * slotMult * hotBoost, 0, 1);
+    if (intensity < 0.08) return; // cut weak glows earlier so non-hot zones stay dim
     const x = (poiMapPercent(poi).x / 100) * w;
     const y = (poiMapPercent(poi).y / 100) * h;
-    const radius = (isMini ? 13 : 24) + intensity * (isMini ? 31 : 62);
+    // Hot POIs have larger radius; normal POIs are smaller to avoid uniform glow
+    const baseRadius = isMini ? 13 : (isHot ? 32 : 18);
+    const radius = baseRadius + intensity * (isMini ? 28 : (isHot ? 72 : 44));
     const [r, g, b] = hexToRgb(poiPhotoGradient(poi).accent);
     const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
-    const a = (isMini ? 0.12 : 0.10) + intensity * (isMini ? 0.36 : 0.42);
+    const a = (isMini ? 0.12 : 0.10) + intensity * (isMini ? 0.36 : (isHot ? 0.48 : 0.30));
     grad.addColorStop(0,    `rgba(${r}, ${g}, ${b}, ${a.toFixed(3)})`);
-    grad.addColorStop(0.36, `rgba(${r}, ${g}, ${b}, ${(a * 0.56).toFixed(3)})`);
-    grad.addColorStop(0.72, `rgba(255, 190, 64, ${(a * 0.20).toFixed(3)})`);
+    grad.addColorStop(0.38, `rgba(${r}, ${g}, ${b}, ${(a * 0.54).toFixed(3)})`);
+    grad.addColorStop(0.70, `rgba(255, 190, 64, ${(a * 0.18).toFixed(3)})`);
     grad.addColorStop(1,    "rgba(255, 190, 64, 0)");
     ctx.fillStyle = grad;
     ctx.beginPath();
@@ -1605,12 +1689,15 @@ function updateMapStats() {
   if (!el) return;
   const list = gaodePOIs.length ? gaodePOIs : pois;
   const totalBuddy = list.reduce((sum, p) => sum + (p.buddy_demand_count || 0), 0);
-  const circle = getCurrentCircle();
+  const formingCount = list.reduce((sum, p) => sum + Math.max(0, Math.round((p.buddy_demand_count || 0) / 4)), 0);
+  const hotCount = list.filter((p) => isHotPoi(p)).length;
+  const radiusKm = currentBrowseRadiusKm();
   el.innerHTML = `
-    <div class="stat-pill is-brand"><b>${escapeHTML(circle.shortName)}</b><span>当前生活圈</span></div>
-    <div class="stat-pill is-hot"><b>${totalBuddy}</b><span>人想找搭子</span></div>
-    <div class="stat-pill"><b>${users.length + backgroundUsers.length}</b><span>今日活跃</span></div>
-    <div class="stat-pill"><b>${list.length}</b><span>圈内地点</span></div>
+    <div class="stat-pill is-brand"><b>${radiusKm}km</b><span>搜索范围</span></div>
+    <div class="stat-pill"><b>${list.length}</b><span>附近地点</span></div>
+    <div class="stat-pill is-hot"><b>${totalBuddy}</b><span>人今日想出门</span></div>
+    <div class="stat-pill" style="background:#fffdf0;border:1px solid #ffe88a;"><b style="color:#92700a;">${formingCount}</b><span>个即将成局</span></div>
+    <div class="stat-pill"><b>${hotCount}</b><span>热门地点</span></div>
   `;
   updateAreaPill();
 }
@@ -1686,10 +1773,26 @@ function updatePOISheet() {
         <div><b>${poi.buddy_demand_count} 人</b><span>最近想约</span></div>
       </div>
 
+      ${(() => {
+        const opp = opportunitySummaryForPoi(poi);
+        const formingLabel = opp.formingCount >= 2 ? `${opp.formingCount} 个即将成局` : "随时可加入";
+        return `
+          <div class="map-opportunity-card">
+            <p style="font-size:11px;font-weight:700;color:#92700a;margin-bottom:8px;">这里为什么容易成局</p>
+            <div class="map-opportunity-grid">
+              <div><b>${opp.demandCount}</b><span>人最近想约</span></div>
+              <div><b>${formingLabel}</b><span>成局进度</span></div>
+              <div><b>${opp.waitLabel}</b><span>当前等待</span></div>
+              <div><b>${opp.savedLabel}</b><span>团购优惠</span></div>
+            </div>
+          </div>
+        `;
+      })()}
+
       <section class="map-merchant-section">
         <div class="map-merchant-section-head">
           <h3>适合这样约</h3>
-          ${matchScore ? `<span>${matchScore}% 匹配</span>` : `<span>${escapeHTML(poi.category)}</span>`}
+          ${matchScore ? `<span class="sheet-match">AI ${matchScore}%</span>` : `<span>${escapeHTML(poi.category)}</span>`}
         </div>
         <b>${escapeHTML(fit.title)}</b>
         <p>${escapeHTML(fit.text)}</p>
@@ -1712,32 +1815,8 @@ function updatePOISheet() {
           <h3>现在有人想去</h3>
           <span>此刻</span>
         </div>
-        ${visibleDemands.map((d) => `
-          <button type="button" class="map-demand-row ${appState.selectedDemandId === d.demand_id ? "is-selected" : ""}" data-demand="${d.demand_id}">
-            <span>${escapeHTML(String(d.nickname || "搭")[0])}</span>
-            <div>
-              <b>${escapeHTML(d.time || "今晚")} · ${escapeHTML(d.size || "1v1")}</b>
-              <p>${escapeHTML(d.note || d.style || "轻松组局")}</p>
-            </div>
-            <small>加入</small>
-          </button>
-        `).join("") || `<p class="empty">这个地点暂无等待中的局，可以直接发起一个。</p>`}
-      </section>
-
-      <section class="map-merchant-section map-create-section">
-        <div class="map-merchant-section-head">
-          <h3>新建局</h3>
-          <span>发给朋友</span>
-        </div>
-        <p>已有局不合适，就用这家店发起一个时间清楚、预算清楚的小局。</p>
-        <div class="map-create-preview">
-          <div>
-            <b>${escapeHTML(poi.name)}</b>
-            <span>${escapeHTML(poi.sub_category)} · 人均 ¥${poi.avg_price} · ${poi.distance_km}km</span>
-          </div>
-          <strong>${escapeHTML(merchantWaitLabel(poi))}</strong>
-        </div>
-        <button type="button" class="map-create-cta" id="createInviteFromPoi">生成邀请卡片</button>
+        ${visibleDemands.map((d) => demandCardHTML(d, appState.selectedDemandId === d.demand_id)).join("")
+          || `<p class="empty">这个地点暂无等待中的局，可以直接发起一个。</p>`}
       </section>
 
       <div class="map-merchant-info-line">
@@ -1745,8 +1824,9 @@ function updatePOISheet() {
       </div>
 
       <div class="map-merchant-actions">
-        <button type="button" class="cta-nav-btn" id="poiNavBtn">导航</button>
-        <button class="cta-match-btn" id="matchFromPoi">找搭子去这里</button>
+        <button class="cta-match-btn map-agent-main" id="matchFromPoi">让 Agent 安排</button>
+        <button type="button" class="cta-nav-btn" id="poiJoinBtn">加入这个局</button>
+        <button type="button" class="cta-nav-btn" id="poiNavBtn">我也想去</button>
       </div>
     </div>
   `;
@@ -1762,7 +1842,11 @@ function updatePOISheet() {
     setTimeout(() => runAI(), 450);
   });
   document.getElementById("poiNavBtn")?.addEventListener("click", () => showPoiNavHint(poi));
-  document.getElementById("createInviteFromPoi")?.addEventListener("click", () => showInviteCardModal(poi, "new"));
+  document.getElementById("poiJoinBtn")?.addEventListener("click", () => {
+    const d = demands[0];
+    if (d) joinDemandFromMapSheet(d.demand_id);
+    else showToast("暂无等待中的局，已为你发起搭子匹配");
+  });
   const joinDemandFromMapSheet = (demandId) => {
     const targetDemand = demands.find((d) => d.demand_id === demandId) || demands.find((d) => d.demand_id === appState.selectedDemandId) || demands[0];
     if (!targetDemand) return;
@@ -1784,6 +1868,37 @@ function updatePOISheet() {
       joinDemandFromMapSheet(card.dataset.demand);
     });
   });
+}
+
+function opportunitySummaryForPoi(poi) {
+  const deal = getDeal(poi.poi_id);
+  const saved = deal ? Math.max(0, deal.original_price - deal.discount_price) : 0;
+  const formingCount = Math.max(1, Math.round((poi.buddy_demand_count || 0) / 4));
+  return {
+    demandCount: poi.buddy_demand_count || 0,
+    formingCount,
+    waitLabel: `${poi.wait_time_min} 分钟`,
+    savedLabel: saved > 0 ? `省 ¥${saved}` : `¥${poi.avg_price} 均价`
+  };
+}
+
+function demandCardHTML(demand, isSelected) {
+  const user = demand.demandUser || {};
+  const verified = user.verified_status;
+  return `
+    <button type="button" class="map-demand-row ${isSelected ? "is-selected" : ""}" data-demand="${demand.demand_id}">
+      <div class="map-demand-avatar">${escapeHTML(String(demand.nickname || "搭")[0])}</div>
+      <div class="map-demand-body">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+          <b style="font-size:13px;">${escapeHTML(demand.time || "今晚")}</b>
+          ${verified ? `<span class="verified-badge">已验证</span>` : ""}
+          <span style="font-size:11px;color:#6b7280;">${escapeHTML(demand.size || "1v1")}</span>
+        </div>
+        <p style="font-size:12px;color:#6b7280;margin-top:1px;">${escapeHTML(demand.note || demand.style || "轻松组局")}</p>
+      </div>
+      <span class="map-demand-join">加入</span>
+    </button>
+  `;
 }
 
 function getFakeDemands(poi) {
@@ -2298,6 +2413,109 @@ async function appendGCPeerReply(gc, messageText) {
   render();
 }
 
+function renderAgentMemoryCard() {
+  const mem = appState.agentMemory;
+  if (!mem) return "";
+  const notice = appState.agentMemoryNotice;
+  const rows = [
+    ["常去场景", mem.preferred_scenes.join(" / ")],
+    ["默认预算", `¥${mem.default_budget_range[0]}–${mem.default_budget_range[1]}`],
+    ["距离偏好", `${mem.distance_preference_km}km 内`],
+    ["社交偏好", mem.social_preference],
+    ["避开条件", mem.avoid_conditions.join("、")],
+    ["团购偏好", mem.deal_preference]
+  ];
+  return `
+    <section class="card agent-memory-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <div>
+          <p class="eyebrow">你的专属 Agent 记忆</p>
+          <p style="font-size:12px;color:#6b7280;margin-top:2px;">从浏览、收藏、历史成局和反馈中学到</p>
+        </div>
+        <div class="agent-memory-dot"></div>
+      </div>
+      <div class="agent-memory-grid">
+        ${rows.map(([label, val]) => `
+          <div class="agent-memory-row">
+            <span class="agent-memory-label">${label}</span>
+            <span class="agent-memory-val">${escapeHTML(val)}</span>
+          </div>
+        `).join("")}
+      </div>
+      <div style="margin-top:10px;">
+        <p style="font-size:11px;color:#9ca3af;margin-bottom:6px;">来自历史行为</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${(mem.learned_from.accepted_plans || []).map((p) => `<span class="memory-chip accepted">${escapeHTML(p)}</span>`).join("")}
+          ${(mem.learned_from.rejected_reasons || []).map((r) => `<span class="memory-chip rejected">✗ ${escapeHTML(r)}</span>`).join("")}
+        </div>
+      </div>
+      ${notice ? `<div class="agent-memory-notice result-fade">${escapeHTML(notice)}</div>` : ""}
+    </section>
+  `;
+}
+
+function personalizedReasonLines(match) {
+  const mem = appState.agentMemory;
+  if (!mem) return [];
+  const lines = [];
+  const dist = match.poi.distance_km;
+  const wait = match.poi.wait_time_min;
+  const cat = match.poi.sub_category || match.poi.category;
+  const pricing = computeDealPricing(match);
+  if (dist <= mem.distance_preference_km) {
+    lines.push(`距离 ${dist}km，符合你常选的 ${mem.distance_preference_km}km 内偏好`);
+  }
+  const avoidWait = mem.avoid_conditions.find((c) => /等待/.test(c));
+  const waitLimit = avoidWait ? parseInt(avoidWait) : 15;
+  if (wait < waitLimit) {
+    lines.push(`等待 ${wait} 分钟，低于你不喜欢的 ${waitLimit} 分钟门槛`);
+  }
+  if (mem.preferred_scenes.some((s) => cat.includes(s) || s.includes(cat))) {
+    lines.push(`${cat} 是你常去的场景之一`);
+  }
+  if (pricing.fits) {
+    lines.push(`券后约 ¥${pricing.perPerson}/人，在你的默认预算 ¥${mem.default_budget_range[0]}–${mem.default_budget_range[1]} 内`);
+  }
+  const avoidNoisy = mem.avoid_conditions.find((c) => /多人/.test(c));
+  if (avoidNoisy && /1v1/.test(match.intent.group_size)) {
+    lines.push("1v1 模式，避开了你不喜欢的多人拼桌场景");
+  }
+  return lines.slice(0, 4);
+}
+
+function applyAgentFeedback(type, match) {
+  const mem = appState.agentMemory;
+  if (!mem) return;
+  const cat = match?.poi?.sub_category || match?.poi?.category || "";
+  let notice = "";
+  if (type === "like") {
+    if (cat && !mem.preferred_scenes.includes(cat)) mem.preferred_scenes.push(cat);
+    if (match?.poi?.name && !mem.learned_from.accepted_plans.includes(match.poi.name)) {
+      mem.learned_from.accepted_plans.push(match.poi.name);
+    }
+    notice = `Agent 已记住：你喜欢这类 ${cat || "场景"}，以后会优先推荐。`;
+  } else if (type === "too_far") {
+    mem.distance_preference_km = Math.max(0.5, mem.distance_preference_km - 0.3);
+    notice = `Agent 已更新：距离偏好缩小至 ${mem.distance_preference_km.toFixed(1)}km，下次会过滤更远的地点。`;
+  } else if (type === "too_noisy") {
+    if (!mem.avoid_conditions.includes("多人拼桌局")) mem.avoid_conditions.push("多人拼桌局");
+    if (!mem.learned_from.rejected_reasons.includes("太嘈杂")) mem.learned_from.rejected_reasons.push("太嘈杂");
+    notice = "Agent 已记住：你不喜欢嘈杂多人局，以后会优先推荐低打扰 1v1。";
+  } else if (type === "too_expensive") {
+    mem.default_budget_range[1] = Math.max(40, mem.default_budget_range[1] - 10);
+    if (!mem.learned_from.rejected_reasons.includes("预算太高")) mem.learned_from.rejected_reasons.push("预算太高");
+    notice = `Agent 已更新：默认预算上限降至 ¥${mem.default_budget_range[1]}，下次会过滤超预算方案。`;
+  } else if (type === "less_like_this") {
+    if (cat && !mem.learned_from.rejected_reasons.includes(cat)) mem.learned_from.rejected_reasons.push(cat);
+    mem.preferred_scenes = mem.preferred_scenes.filter((s) => s !== cat);
+    notice = `Agent 已记住：减少推荐「${cat || "这类"}」场景，以后会探索其他品类。`;
+  }
+  appState.agentMemoryNotice = notice;
+  appState.agentFeedbackLog.push({ type, cat, timestamp: nowTime() });
+  showToast(notice || "Agent 已更新记忆");
+  render();
+}
+
 function renderAIPage() {
   const mood = appState.aiMoodProfile;
   const moodSignals = mood
@@ -2307,8 +2525,8 @@ function renderAIPage() {
     <section class="card ai-card agent-console">
       <div class="agent-head">
         <div>
-          <p class="eyebrow">AI Agent</p>
-          <h2>把一句话变成今晚的方案</h2>
+          <p class="eyebrow">我的专属 Agent</p>
+          <h2>只说今天的状态，Agent 会结合你的记忆自动完成</h2>
           <p class="muted">你可以直接说状态、预算、距离或想避开的场景。</p>
         </div>
         <div class="agent-status ${appState.aiLoading ? "is-thinking" : appState.matchResults.length ? "is-ready" : ""}">
@@ -2338,6 +2556,7 @@ function renderAIPage() {
         </label>
       </div>
     </section>
+    ${renderAgentMemoryCard()}
     ${renderAIProcess()}
     ${renderAIDirectorCard()}
     ${renderIntentCard()}
@@ -2399,6 +2618,13 @@ function renderAIPage() {
       const planIndex = Number(button.dataset.adjust);
       const patch = button.dataset.patch;
       applyPlanAdjust(planIndex, patch);
+    });
+  });
+  $$("#aiPage [data-agent-feedback]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const type = button.dataset.agentFeedback;
+      const planIndex = Number(button.dataset.feedbackPlan || "0");
+      applyAgentFeedback(type, appState.matchResults[planIndex]);
     });
   });
 }
@@ -2485,17 +2711,36 @@ function renderIntentCard() {
   const i = appState.parsedIntent;
   const mood = appState.aiMoodProfile;
   const confidenceLow = i.parse_layer === "low_confidence";
-  const isAgent = ["agent_enriched", "emotion_enriched", "emotion_aware"].includes(i.parse_layer);
-  const ruleTags = [i.activity_type, i.category_preference, `¥${i.budget_max}以内`, i.social_style, i.group_size, i.target_time].join(" · ");
+  const mem = appState.agentMemory;
+  const moodLabel = mood?.mood_label || mood?.user_state || "";
+  const hardConditions = [
+    i.distance_tolerance_km < 2 ? `近距离（${i.distance_tolerance_km}km）` : null,
+    i.budget_max ? `预算 ¥${i.budget_max} 以内` : null,
+    i.target_time !== "今晚" ? i.target_time : null
+  ].filter(Boolean);
+  const softPrefs = [
+    i.social_style,
+    i.group_size !== "1v1" ? i.group_size : "1v1 优先",
+    i.category_explicit ? i.category_preference : null
+  ].filter(Boolean);
+  const agentJudgment = (() => {
+    const avoid = [];
+    if (mem?.avoid_conditions?.some((c) => /多人/.test(c))) avoid.push("排除多人拼桌局");
+    if (mem?.avoid_conditions?.some((c) => /等待/.test(c))) avoid.push("过滤高等待商家");
+    return avoid.length ? avoid.join("，") : "结合记忆综合匹配";
+  })();
   return `
     <section class="card ai-state is-done agent-parse-card">
       <div class="analyzing-dot"></div>
-      <div>
+      <div style="width:100%;">
         <b>Agent 理解结果</b>
-        ${mood ? `<p class="agent-mood-line">${escapeHTML(mood.user_state || mood.mood_label || "已识别你的状态")}</p>` : ""}
-        <p style="margin-top:6px;"><span class="parse-layer-tag l0">意图</span> ${ruleTags}</p>
-        ${isAgent ? `<p style="margin-top:6px;"><span class="parse-layer-tag l2">Agent</span> ${escapeHTML(mood?.score_basis || "已校准意图并触发重匹配")}</p>` : ""}
-        <p style="margin-top:6px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
+        <div class="intent-analysis-grid">
+          ${moodLabel ? `<div class="intent-row"><span class="intent-row-label">当前状态</span><span>${escapeHTML(moodLabel)}</span></div>` : ""}
+          ${hardConditions.length ? `<div class="intent-row"><span class="intent-row-label">硬条件</span><span>${hardConditions.map(escapeHTML).join("、")}</span></div>` : ""}
+          ${softPrefs.length ? `<div class="intent-row"><span class="intent-row-label">软偏好</span><span>${softPrefs.map(escapeHTML).join("、")}</span></div>` : ""}
+          <div class="intent-row"><span class="intent-row-label">Agent 判断</span><span>${escapeHTML(agentJudgment)}</span></div>
+        </div>
+        <p style="margin-top:8px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
           ${confidenceLow ? "低置信度待澄清" : "AI 分析完成"}（置信度 ${Math.round((i.parse_confidence || 0.8) * 100)}%）
         </p>
         ${renderClarifyingQuestions()}
@@ -2532,7 +2777,7 @@ function renderAgentClarifyCard() {
     : `差一个判断：${missingSlots.join("或")}大概是什么范围？`;
   const chips = Array.isArray(questions) && questions.length
     ? questions.slice(0, 3).map((q, idx) => `<button class="clarify-chip" data-clarify="${idx}">${escapeHTML(q)}</button>`).join("")
-    : ["随便逛逛", "吃顿饭就好", "预算 60 以内", "不要太远"].map((q, idx) =>
+    : ["随便逛逛", "吃顿饭就好", "预算 60 以内", "不要太远"].map((q) =>
         `<button class="clarify-chip" data-clarify-text="${escapeHTML(q)}">${q}</button>`
       ).join("");
   return `
@@ -2684,6 +2929,14 @@ function renderMatchCard(match, index) {
           <li><b>判断</b>：${escapeHTML(match.explanation || "综合预算、距离、品类偏好三维匹配")}</li>
           ${director.score_reason ? `<li><b>评分依据</b>：${escapeHTML(director.score_reason)}</li>` : ""}
         </ul>
+        ${personalizedReasonLines(match).length ? `
+          <div style="margin-top:8px;padding:8px 10px;background:#fffdf0;border-radius:10px;border:1px solid #ffe88a;">
+            <p style="font-size:11px;font-weight:700;color:#92700a;margin-bottom:4px;">基于你的记忆</p>
+            <ul style="margin:0;padding-left:14px;">
+              ${personalizedReasonLines(match).map((line) => `<li style="font-size:12px;color:#4b5563;margin-bottom:2px;">${escapeHTML(line)}</li>`).join("")}
+            </ul>
+          </div>
+        ` : ""}
       </details>
       <div class="plan-copy">
         <b>${escapeHTML(planTitle)}</b>
@@ -2697,6 +2950,14 @@ function renderMatchCard(match, index) {
         <button class="text-button" data-adjust="${index}" data-patch="quieter">更安静</button>
         <button class="text-button" data-adjust="${index}" data-patch="change_time">换时间</button>
         <button class="text-button" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
+      </div>
+      <div class="feedback-row">
+        <span style="font-size:11px;color:#9ca3af;align-self:center;">告诉 Agent：</span>
+        <button class="feedback-chip like" data-agent-feedback="like" data-feedback-plan="${index}">喜欢这个</button>
+        <button class="feedback-chip" data-agent-feedback="too_far" data-feedback-plan="${index}">太远了</button>
+        <button class="feedback-chip" data-agent-feedback="too_noisy" data-feedback-plan="${index}">太嘈杂</button>
+        <button class="feedback-chip" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
+        <button class="feedback-chip" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
       </div>
       <button class="primary-button wide" data-invite-match="${index}" style="margin-top:4px;">发出邀约</button>
     </article>
@@ -2909,7 +3170,6 @@ function renderChatPage() {
     const match = appState.selectedMatch;
     const deal = getDeal(match.poi.poi_id);
     const planMeta = currentPlanStatusMeta();
-    const rep = reputationBadge(match.user);
     $("#chatPage").innerHTML = `
       <section class="card gc-header-card">
         <button type="button" class="back-text-btn" id="backFromActive">← 消息</button>

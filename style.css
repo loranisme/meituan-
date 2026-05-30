@@ -28,6 +28,103 @@
   #mockMapCanvas.real-map { height: 340px; }
 }
 
+/* ---------- 分区色块 ---------- */
+.map-zone {
+  position: absolute;
+  z-index: 1;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0.13;
+}
+.zone-dining {
+  width: 38%;
+  height: 50%;
+  left: 8%;
+  top: 30%;
+  background: radial-gradient(circle, #FF6B35 0%, transparent 70%);
+}
+.zone-play {
+  width: 34%;
+  height: 42%;
+  right: 6%;
+  top: 10%;
+  background: radial-gradient(circle, #8B5CF6 0%, transparent 70%);
+}
+.zone-sport {
+  width: 32%;
+  height: 40%;
+  right: 8%;
+  bottom: 10%;
+  background: radial-gradient(circle, #2563EB 0%, transparent 70%);
+}
+.zone-night {
+  width: 30%;
+  height: 38%;
+  left: 6%;
+  bottom: 8%;
+  background: radial-gradient(circle, #FF2442 0%, transparent 70%);
+}
+
+/* ---------- 分区标签 ---------- */
+.map-zone-label {
+  position: absolute;
+  z-index: 2;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.78);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  color: rgba(15, 23, 42, 0.55);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.zone-label-dining { left: 10%; top: 42%; }
+.zone-label-play   { right: 8%; top: 12%; }
+.zone-label-sport  { right: 9%; bottom: 22%; }
+.zone-label-night  { left: 8%; bottom: 22%; }
+
+/* ---------- 次级道路 ---------- */
+.road-secondary-a {
+  width: 3px;
+  height: 38%;
+  left: 28%;
+  top: 22%;
+  border-radius: 999px;
+}
+.road-secondary-b {
+  width: 3px;
+  height: 30%;
+  left: 68%;
+  top: 28%;
+  border-radius: 999px;
+}
+
+/* ---------- 选中 POI 路线连接 ---------- */
+.map-route-svg {
+  pointer-events: none;
+  z-index: 3;
+}
+.map-route-dist {
+  position: absolute;
+  z-index: 9;
+  transform: translate(-50%, -50%);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.80);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: routePillFade 0.3s ease-out both;
+}
+@keyframes routePillFade {
+  from { opacity: 0; transform: translate(-50%, -60%); }
+  to   { opacity: 1; transform: translate(-50%, -50%); }
+}
+
 /* 街区底图：弱化功能区，突出店铺点位和热力 */
 .map-grid {
   position: absolute;
@@ -227,16 +324,40 @@
 }
 
 .map-pin.is-hot {
-  border-color: rgba(255, 36, 66, 0.32);
   background: #fffafa;
-  box-shadow: 0 0 0 3px rgba(255, 224, 51, 0.28), 0 6px 18px rgba(255, 36, 66, 0.14);
+  border-color: rgba(255, 36, 66, 0.34);
+  box-shadow:
+    0 0 0 3px rgba(255, 36, 66, 0.12),
+    0 8px 20px rgba(255, 36, 66, 0.16);
+}
+
+.map-pin.is-ai {
+  background: #fffdf0;
+  border-color: #f5c800;
+  border-width: 1.5px;
+  box-shadow:
+    0 0 0 4px rgba(255, 224, 51, 0.34),
+    0 9px 24px rgba(15, 23, 42, 0.16);
+  z-index: 6;
+}
+
+.pin-ai-score {
+  font-size: 10px;
+  font-weight: 900;
+  color: #1a1a1a;
+  background: #ffe033;
+  border-radius: 999px;
+  padding: 2px 5px;
+  white-space: nowrap;
 }
 
 .map-pin.is-selected {
-  transform: translate(-50%, -50%);
-  border-color: #FFE033;
+  transform: translate(-50%, -50%) scale(1.12);
+  border-color: #ffe033;
   border-width: 2px;
-  box-shadow: 0 0 0 4px rgba(255, 224, 51, 0.42), 0 8px 22px rgba(15, 23, 42, 0.18);
+  box-shadow:
+    0 0 0 5px rgba(255, 224, 51, 0.38),
+    0 12px 28px rgba(15, 23, 42, 0.22);
   z-index: 8;
 }
 
@@ -664,47 +785,73 @@
 }
 .map-demand-row {
   width: 100%;
-  border: 0;
-  border-radius: 12px;
-  background: #fafafa;
-  padding: 9px 10px;
+  border: 1px solid #ebebeb;
+  border-radius: 14px;
+  background: #fff;
+  padding: 10px 10px;
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: 36px 1fr auto;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   text-align: left;
   cursor: pointer;
+  margin-bottom: 6px;
 }
-.map-demand-row > span {
-  width: 32px;
-  height: 32px;
+.map-demand-avatar {
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: #FFE033;
   color: #1a1a1a;
-  font-size: 12px;
-  font-weight: 950;
-}
-.map-demand-row b {
-  display: block;
-  color: #222;
   font-size: 13px;
   font-weight: 950;
+  flex-shrink: 0;
 }
-.map-demand-row p {
-  margin-top: 3px;
-  color: #8a8a8a;
-  font-size: 11px;
+.map-demand-body {
+  min-width: 0;
 }
-.map-demand-row small {
+.map-demand-join {
   color: #FF6B35;
-  font-size: 11px;
-  font-weight: 950;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 .map-demand-row:hover,
 .map-demand-row.is-selected {
-  background: #fff8d7;
+  background: #fffdf0;
+  border-color: #ffe033;
+}
+/* ---------- Opportunity card ---------- */
+.map-opportunity-card {
+  margin: 10px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff8e6;
+  border: 1px solid rgba(245, 200, 0, 0.42);
+}
+.map-opportunity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.map-opportunity-grid div {
+  background: #fff;
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+.map-opportunity-grid b {
+  display: block;
+  font-size: 14px;
+  font-weight: 800;
+  color: #1a1a1a;
+}
+.map-opportunity-grid span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #6b7280;
 }
 .map-create-section {
   background: #fffdf3;
@@ -768,16 +915,22 @@
 }
 .map-merchant-actions {
   display: grid;
-  grid-template-columns: 0.88fr 1.12fr;
-  gap: 10px;
-  margin-top: 2px;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+.map-merchant-actions .map-agent-main {
+  grid-column: 1 / -1;
+  min-height: 50px;
+  font-size: 16px;
 }
 .map-merchant-actions .cta-match-btn {
   min-height: 48px;
 }
 .map-merchant-actions .cta-nav-btn {
-  min-height: 48px;
-  font-weight: 900;
+  min-height: 44px;
+  font-weight: 700;
+  font-size: 13px;
 }
 .modal-hero {
   height: 140px;
