@@ -26,7 +26,7 @@ async function main() {
 
   await page.click('.nav-item[data-page="ai"]');
   await page.waitForFunction(
-    () => document.getElementById("aiPage")?.classList.contains("is-active") && document.getElementById("runAIButton"),
+    () => document.getElementById("aiPage")?.classList.contains("block") && document.getElementById("runAIButton"),
     null,
     { timeout: 8000 }
   );

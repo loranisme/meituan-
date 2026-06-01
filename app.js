@@ -59,7 +59,7 @@ const appState = {
   selectedCategory: "全部",
   selectedSceneGroup: null,
   sceneNavExpanded: false,
-  selectedPOI: pois[0],
+  selectedPOI: pois.find((p) => p.poi_id === "poi_039") || pois[0],
   selectedDemandId: null,
   poiConstraint: null,
   userInput: "今晚想找一个人吃韩餐，预算 80 元以内，不想太尴尬，最好轻松聊聊，离我不要太远。",
@@ -99,7 +99,7 @@ const appState = {
   lastRejectRematch: null,
   selectedCircleId: lifeCircles[0]?.id || "near",
   circlePageOpen: false,
-  browseRadiusKm: 2,
+  browseRadiusKm: 5,
   circleTimeSlot: "now",
   mapLayer: "heat",
   mapExpandedClusterId: null,
@@ -404,12 +404,27 @@ function setPage(page) {
 }
 
 function render() {
-  $$(".page").forEach((page) => page.classList.remove("is-active"));
-  const pageId = appState.currentPage === "map" ? "mapPage" : appState.currentPage === "ai" ? "aiPage" : appState.currentPage === "chat" ? "chatPage" : appState.currentPage === "success" ? "successPage" : "profilePage";
-  $(`#${pageId}`).classList.add("is-active");
-  $$(".nav-item").forEach((item) => item.classList.toggle("is-active", item.dataset.page === appState.currentPage || (appState.currentPage === "success" && item.dataset.page === "chat")));
+  const pageIds = ["mapPage", "aiPage", "chatPage", "successPage", "profilePage"];
+  const activeId = appState.currentPage === "map" ? "mapPage" : appState.currentPage === "ai" ? "aiPage" : appState.currentPage === "chat" ? "chatPage" : appState.currentPage === "success" ? "successPage" : "profilePage";
+  pageIds.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("hidden", id !== activeId);
+    el.classList.toggle("block", id === activeId);
+  });
+  $$(".nav-item").forEach((item) => {
+    const active = item.dataset.page === appState.currentPage || (appState.currentPage === "success" && item.dataset.page === "chat");
+    item.classList.toggle("text-ink", active);
+    item.classList.toggle("text-muted", !active);
+    item.querySelector(".nav-icon")?.classList.toggle("bg-brand", active);
+    item.querySelector(".nav-icon")?.classList.toggle("rounded-xl", active);
+    item.querySelector(".nav-icon")?.classList.toggle("rounded-lg", !active);
+  });
   updateAreaPill();
   updateChatNavBadge();
+  document.body.classList.toggle("is-discover-page", appState.currentPage === "map");
+  const discoverExtras = document.getElementById("discoverHeaderExtras");
+  if (discoverExtras) discoverExtras.hidden = appState.currentPage !== "map";
   if (appState.currentPage === "map") renderMapPage();
   renderAIPage();
   renderChatPage();
@@ -481,11 +496,11 @@ function updateAreaPill() {
   const circle = getCurrentCircle();
   const stats = circleStats(circle);
   el.innerHTML = `
-    <span class="loc-pin" aria-hidden="true" style="background:${circle.tint || "#FFF8E6"};border:2px solid ${circle.accent || "#FF6B35"}">
+    <span class="${TW.locPin}" aria-hidden="true" style="background:${circle.tint || "#FFF8E6"};border:2px solid ${circle.accent || "#FF6B35"}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="${circle.accent || "#FF6B35"}"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
     </span>
-    <span class="loc-copy"><b>${escapeHTML(circle.shortName)}</b><small>${stats.buddies} 人想找搭子 · ${stats.shops} 家店 · 约 ${appState.browseRadiusKm}km</small></span>
-    <span class="loc-chev" aria-hidden="true">›</span>
+    <span class="${TW.locCopy}"><b>${escapeHTML(circle.shortName)}</b><small>${stats.buddies} 人想找搭子 · ${stats.shops} 家店 · 约 ${appState.browseRadiusKm}km</small></span>
+    <span class="${TW.locChev}" aria-hidden="true">›</span>
   `;
   bindAreaPill();
 }
@@ -869,13 +884,13 @@ function showInviteCardModal(poiOverride = null, initialMode = "join") {
        color:${active ? "#1a1a1a" : "#666"};`;
 
     overlay.innerHTML = `
-      <div class="modal-sheet" style="padding-bottom:36px;">
-        <div class="modal-header">
+      <div class="${TW.modalSheet}" style="padding-bottom:36px;">
+        <div class="${TW.modalHeader}">
           <div>
             <h2 style="font-size:17px;margin:0;">邀请卡片</h2>
             <p style="font-size:11px;color:#999;margin:2px 0 0;">发出后对方一键接受即进活动页</p>
           </div>
-          <button class="modal-close" id="closeInviteCard">关闭</button>
+          <button class="${TW.modalClose}" id="closeInviteCard">关闭</button>
         </div>
         <!-- Tab -->
         <div style="display:flex;gap:8px;margin:12px 16px 14px;">
@@ -886,8 +901,8 @@ function showInviteCardModal(poiOverride = null, initialMode = "join") {
         ${buildCardPreview(hotPoi)}
         <!-- CTA row -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px 16px 0;">
-          <button type="button" class="secondary-button" id="icCopy" style="min-height:46px;font-size:13px;">复制链接</button>
-          <button type="button" class="primary-button"   id="icGo"   style="min-height:46px;font-size:14px;">
+          <button type="button" class="${TW.secondaryButton}" id="icCopy" style="min-height:46px;font-size:13px;">复制链接</button>
+          <button type="button" class="${TW.primaryButton}"   id="icGo"   style="min-height:46px;font-size:14px;">
             ${mode === "join" ? "加入活动" : "生成卡片"}
           </button>
         </div>
@@ -1012,22 +1027,22 @@ function renderCirclePage() {
   page.id = "circlePage";
   page.className = "circle-page";
   page.innerHTML = `
-    <header class="circle-page-header">
-      <button type="button" class="back-text-btn" id="closeCirclePage">返回</button>
+    <header class="${TW.circlePageHeader}">
+      <button type="button" class="${TW.backTextBtn}" id="closeCirclePage">返回</button>
       <h1>发现</h1>
     </header>
-    <div class="circle-page-body">
-      <section class="circle-hero" style="--circle-tint:${current.tint}">
-        <div class="circle-pulse-bar">
-          <span><span class="live-dot"></span> ${browsing} 人正逛这个圈</span>
-          <span class="circle-weather">${circleWeather.temp}° ${escapeHTML(circleWeather.label)}</span>
+    <div class="${TW.circlePageBody}">
+      <section class="${TW.circleHero}" style="--circle-tint:${current.tint}">
+        <div class="${TW.circlePulseBar}">
+          <span><span class="${TW.liveDot}"></span> ${browsing} 人正逛这个圈</span>
+          <span class="${TW.circleWeather}">${circleWeather.temp}° ${escapeHTML(circleWeather.label)}</span>
         </div>
         <b>${escapeHTML(current.name)}</b>
         <p>${escapeHTML(current.tagline)} · ${escapeHTML(activeSceneName)}</p>
-        <p class="circle-ad-line">「${escapeHTML(brandSloganLine())}」</p>
-        <div class="circle-time-row" id="circleTimeRow">
+        <p class="${TW.circleAdLine}">「${escapeHTML(brandSloganLine())}」</p>
+        <div class="${TW.circleTimeRow}" id="circleTimeRow">
           ${timeSlots.map((t) => `
-            <button type="button" class="circle-time-chip ${appState.circleTimeSlot === t.id ? "is-active" : ""}" data-slot="${t.id}">${t.label}</button>
+            <button type="button" class="${TW.circleTimeChip} ${appState.circleTimeSlot === t.id ? "is-active" : ""}" data-slot="${t.id}">${t.label}</button>
           `).join("")}
         </div>
         <div style="margin-top:10px;">
@@ -1039,36 +1054,36 @@ function renderCirclePage() {
             <div style="width:${heatPct}%;height:100%;border-radius:4px;transition:width 0.45s ease;background:${heatPct >= 75 ? "linear-gradient(90deg,#FFB347,#FF6B35,#FF2442)" : heatPct >= 45 ? "linear-gradient(90deg,#FFE033,#FFB347,#FF6B35)" : "linear-gradient(90deg,#FFE033,#FFB347)"};"></div>
           </div>
         </div>
-        <div class="circle-mini-map" id="circleMiniMap" style="margin-top:8px;">
+        <div class="${TW.circleMiniMap}" id="circleMiniMap" style="margin-top:8px;">
           ${flatMapZonesHTML("", { pulseEat: true })}
           <canvas id="miniHeatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>
           <div class="mini-map-pins">${miniMapPinsHTML(displayPoiList)}</div>
         </div>
-        <p class="muted" style="font-size:11px;margin-top:6px;">地图已按「${escapeHTML(activeSceneName)}」显示 ${escapeHTML(sceneSummary)}</p>
-        <div class="circle-card-stats" style="margin-top:10px">
+        <p class="${TW.muted}" style="font-size:11px;margin-top:6px;">地图已按「${escapeHTML(activeSceneName)}」显示 ${escapeHTML(sceneSummary)}</p>
+        <div class="${TW.circleCardStats}" style="margin-top:10px">
           <span><b>${effectiveShops}</b> 家店</span>
           <span><b>${effectiveBuddies}</b> 人想约</span>
           <span>约 ${appState.browseRadiusKm}km</span>
         </div>
       </section>
 
-      <section class="card discover-filter-card">
-        <div class="section-head"><h3>地图筛选</h3><button type="button" class="linkish" id="circleSeeMap">看地图</button></div>
-        <p class="muted discover-filter-note">切换生活圈或类型后，地图上的商家点位和热力会同步更新。</p>
+      <section class="${TW.card} ${TW.discoverFilterCard}">
+        <div class="${TW.sectionHead}"><h3>地图筛选</h3><button type="button" class="${TW.linkish}" id="circleSeeMap">看地图</button></div>
+        <p class="${TW.muted} ${TW.discoverFilterNote}">切换生活圈或类型后，地图上的商家点位和热力会同步更新。</p>
 
-        <div class="discover-control-label">生活圈</div>
-        <div class="circle-list discover-circle-list">
+        <div class="${TW.discoverControlLabel}">生活圈</div>
+        <div class="${TW.circleList} ${TW.discoverCircleList}">
           ${lifeCircles.map((c) => {
             const s = circleStats(c);
             const active = c.id === appState.selectedCircleId;
             return `
-              <button type="button" class="circle-card discover-circle-card ${active ? "is-active" : ""}" data-circle="${c.id}"
+              <button type="button" class="${TW.circleCard} ${TW.discoverCircleCard} ${active ? "is-active" : ""}" data-circle="${c.id}"
                 style="--card-tint:${c.tint};--card-accent:${c.accent}">
-                <div class="circle-card-head">
-                  <span class="circle-card-icon">${escapeHTML(c.shortName[0])}</span>
+                <div class="${TW.circleCardHead}">
+                  <span class="${TW.circleCardIcon}">${escapeHTML(c.shortName[0])}</span>
                   <div>
                     <h3>${escapeHTML(c.name)}</h3>
-                    <p class="circle-meta">${escapeHTML(c.vibe || "")} · ${s.shops} 店 · ${s.buddies} 人想约</p>
+                    <p class="${TW.circleMeta}">${escapeHTML(c.vibe || "")} · ${s.shops} 店 · ${s.buddies} 人想约</p>
                   </div>
                 </div>
               </button>
@@ -1076,45 +1091,45 @@ function renderCirclePage() {
           }).join("")}
         </div>
 
-        <div class="discover-control-label">浏览范围</div>
-        <div class="radius-row" id="radiusRow">
+        <div class="${TW.discoverControlLabel}">浏览范围</div>
+        <div class="${TW.radiusRow}" id="radiusRow">
           ${[2, 3, 5].map((km) => `
-            <button type="button" class="radius-chip ${appState.browseRadiusKm === km ? "is-active" : ""}" data-radius="${km}">${km} km</button>
+            <button type="button" class="${TW.radiusChip} ${appState.browseRadiusKm === km ? "is-active" : ""}" data-radius="${km}">${km} km</button>
           `).join("")}
         </div>
 
-        <div class="discover-control-label">组局类型</div>
-        <div class="scene-group-grid discover-scene-grid" role="tablist">
-          <button type="button" class="scene-group-tile ${appState.selectedCategory === "全部" ? "is-active" : ""}" data-discover-group="all" style="--accent:#FF6B35;--tint:#FFF4ED">
+        <div class="${TW.discoverControlLabel}">组局类型</div>
+        <div class="${TW.sceneGroupGrid} ${TW.discoverSceneGrid}" role="tablist">
+          <button type="button" class="${TW.sceneGroupTile} ${appState.selectedCategory === "全部" ? "is-active" : ""}" data-discover-group="all" style="--accent:#FF6B35;--tint:#FFF4ED">
             ${sceneIcon("全", "#FF6B35", "#FFF4ED")}
-            <span class="sg-label">全部</span>
-            <span class="sg-meta">${circlePoiList.length} 店 · ${circleTotalStats.buddies} 人</span>
+            <span class="${TW.sgLabel}">全部</span>
+            <span class="${TW.sgMeta}">${circlePoiList.length} 店 · ${circleTotalStats.buddies} 人</span>
           </button>
           ${sceneGroups.map((group) => {
             const groupStats = groupDemandStats(group);
             const isActive = activeGroupId === group.id;
             return `
-              <button type="button" class="scene-group-tile ${isActive ? "is-active" : ""}" data-discover-group="${group.id}"
+              <button type="button" class="${TW.sceneGroupTile} ${isActive ? "is-active" : ""}" data-discover-group="${group.id}"
                 style="--accent:${group.accent};--tint:${group.tint}">
                 ${sceneIcon(sceneGroupAbbr(group), group.accent, group.tint)}
-                <span class="sg-label">${group.label}</span>
-                <span class="sg-meta">${groupStats.shops} 店 · ${groupStats.people} 人</span>
+                <span class="${TW.sgLabel}">${group.label}</span>
+                <span class="${TW.sgMeta}">${groupStats.shops} 店 · ${groupStats.people} 人</span>
               </button>
             `;
           }).join("")}
         </div>
-        <div class="scene-sub-panel ${activeGroup ? "is-open" : ""}" ${activeGroup ? "" : 'aria-hidden="true"'}>
+        <div class="${TW.sceneSubPanel} ${activeGroup ? "is-open" : ""}" ${activeGroup ? "" : 'aria-hidden="true"'}>
           ${activeGroup ? `
-            <div class="scene-sub-track">
+            <div class="${TW.sceneSubTrack}">
               ${activeGroup.scenes.map((scene) => {
                 const meta = sceneCatalog[scene] || { abbr: scene[0], tagline: scene };
                 const sceneStats = sceneDemandStats(scene);
                 const isSceneActive = appState.selectedCategory === scene;
                 return `
-                  <button type="button" class="scene-sub-chip ${isSceneActive ? "is-active" : ""}" data-discover-scene="${scene}"
+                  <button type="button" class="${TW.sceneSubChip} ${isSceneActive ? "is-active" : ""}" data-discover-scene="${scene}"
                     style="--accent:${activeGroup.accent}">
                     ${sceneIcon(sceneMetaAbbr(meta), activeGroup.accent, activeGroup.tint, "sm")}
-                    <span class="ssc-text">
+                    <span class="${TW.sscText}">
                       <b>${scene.replace("搭子", "")}</b>
                       <small>${sceneStats.shops} 店 · ${sceneStats.people} 人想约</small>
                     </span>
@@ -1125,14 +1140,14 @@ function renderCirclePage() {
           ` : ""}
         </div>
         ${appState.selectedCategory !== "全部" ? `
-          <button type="button" class="scene-clear-filter" id="clearDiscoverFilter">清除类型筛选 · 看全部地点</button>
+          <button type="button" class="${TW.sceneClearFilter}" id="clearDiscoverFilter">清除类型筛选 · 看全部地点</button>
         ` : ""}
       </section>
 
-      <div class="section-head" style="margin-top:14px"><h3>地图上的地点</h3><span class="muted" style="font-size:12px;">${escapeHTML(sceneSummary)}</span></div>
-      <div class="discover-poi-list">
+      <div class="${TW.sectionHead}" style="margin-top:14px"><h3>地图上的地点</h3><span class="${TW.muted}" style="font-size:12px;">${escapeHTML(sceneSummary)}</span></div>
+      <div class="${TW.discoverPoiList}">
         ${mapPois.map((p) => `
-          <button type="button" class="discover-poi-row" data-poi="${p.poi_id}">
+          <button type="button" class="${TW.discoverPoiRow}" data-poi="${p.poi_id}">
             ${poiBadgeHTML(p)}
             <div>
               <b>${escapeHTML(p.name)}</b>
@@ -1140,15 +1155,15 @@ function renderCirclePage() {
             </div>
             <span>¥${p.avg_price}</span>
           </button>
-        `).join("") || `<div class="empty-state">这个筛选下暂时没有地点，换个类型试试。</div>`}
+        `).join("") || `<div class="${TW.emptyState}">这个筛选下暂时没有地点，换个类型试试。</div>`}
       </div>
 
-      <div class="section-head" style="margin-top:14px"><h3>圈子里正在发生</h3></div>
-      <div class="circle-moment-list">
+      <div class="${TW.sectionHead}" style="margin-top:14px"><h3>圈子里正在发生</h3></div>
+      <div class="${TW.circleMomentList}">
         ${moments.slice(0, 3).map((m) => `
-          <button type="button" class="circle-moment" data-poi="${m.poi_id || ""}">
-            <div class="circle-moment-head">
-              <span class="circle-live-avatar">${escapeHTML(m.avatar)}</span>
+          <button type="button" class="${TW.circleMoment}" data-poi="${m.poi_id || ""}">
+            <div class="${TW.circleMomentHead}">
+              <span class="${TW.circleLiveAvatar}">${escapeHTML(m.avatar)}</span>
               <div><b>${escapeHTML(m.user)}</b> <small>${escapeHTML(m.ago)} · ${escapeHTML(m.time)}</small></div>
             </div>
             <p>${escapeHTML(m.text)}</p>
@@ -1156,19 +1171,19 @@ function renderCirclePage() {
         `).join("")}
       </div>
 
-      <section class="card circle-live" style="margin-top:12px">
-        <p class="eyebrow">可加入的局</p>
+      <section class="${TW.card} ${TW.circleLive}" style="margin-top:12px">
+        <p class="${TW.eyebrow}">可加入的局</p>
         ${liveDemands.map((d) => `
-          <div class="circle-live-item">
-            <span class="circle-demand-icon">${escapeHTML((d.activity_type || "搭")[0])}</span>
+          <div class="${TW.circleLiveItem}">
+            <span class="${TW.circleDemandIcon}">${escapeHTML((d.activity_type || "搭")[0])}</span>
             <div style="flex:1">
               <b>${escapeHTML(d.poi_name)}</b>
-              <p class="muted" style="font-size:12px;">${escapeHTML(d.target_time)} · ¥${d.budget_min}–${d.budget_max} · ${d.distance_km}km</p>
+              <p class="${TW.muted}" style="font-size:12px;">${escapeHTML(d.target_time)} · ¥${d.budget_min}–${d.budget_max} · ${d.distance_km}km</p>
             </div>
-            <button type="button" class="text-button" data-join="${escapeHTML(d.demand_id)}">加入</button>
+            <button type="button" class="${TW.textButton}" data-join="${escapeHTML(d.demand_id)}">加入</button>
           </div>
-        `).join("") || `<p class="muted" style="font-size:12px;margin-top:8px;">当前筛选下暂无可加入的局。</p>`}
-        <button type="button" class="primary-button wide" id="circleGoMatch" style="margin-top:12px">用${escapeHTML(brand.name)}匹配一个搭子</button>
+        `).join("") || `<p class="${TW.muted}" style="font-size:12px;margin-top:8px;">当前筛选下暂无可加入的局。</p>`}
+        <button type="button" class="${TW.primaryButton} ${TW.wide}" id="circleGoMatch" style="margin-top:12px">用${escapeHTML(brand.name)}匹配一个搭子</button>
       </section>
     </div>
   `;
@@ -1281,7 +1296,7 @@ function updateChatNavBadge() {
 function venueExtraModalRows(poi) {
   const ex = poi.venue_extra;
   if (!ex) return "";
-  const row = (label, value) => `<div class="modal-info-row"><span>${label}</span><b>${value}</b></div>`;
+  const row = (label, value) => `<div class="${TW.modalInfoRow}"><span>${label}</span><b>${value}</b></div>`;
   if (poi.category === "攀岩") {
     return [row("难度", ex.climb_grade), row("装备", ex.gear_rental), row("时长", ex.session_duration)].join("");
   }
@@ -1298,13 +1313,13 @@ function venueExtraChips(poi) {
   const ex = poi.venue_extra;
   if (!ex) return "";
   if (poi.category === "攀岩") {
-    return `<span class="mchip">${ex.climb_grade}</span><span class="mchip">${ex.gear_rental}</span>`;
+    return `<span class="${TW.mchip}">${ex.climb_grade}</span><span class="${TW.mchip}">${ex.gear_rental}</span>`;
   }
   if (poi.category === "骑行") {
-    return `<span class="mchip">${ex.route_length}</span><span class="mchip">${ex.bike_rental}</span>`;
+    return `<span class="${TW.mchip}">${ex.route_length}</span><span class="${TW.mchip}">${ex.bike_rental}</span>`;
   }
   if (poi.category === "桌游") {
-    return `<span class="mchip">${ex.private_room}</span><span class="mchip">${ex.avg_session_hours}</span>`;
+    return `<span class="${TW.mchip}">${ex.private_room}</span><span class="${TW.mchip}">${ex.avg_session_hours}</span>`;
   }
   return "";
 }
@@ -1371,24 +1386,40 @@ function defaultIntentTextForPoi(poi) {
 }
 
 function renderMapPage() {
-  if (!document.getElementById("mockMapCanvas")) {
+  if (!document.getElementById("refDiscoverRoot")) {
     $("#mapPage").innerHTML = `
-      <div class="map-page-layout">
-        <div id="mapStatsBar" class="stat-strip card"></div>
-        <section class="map-block card map-card">
-          <div id="mapAgentToolbar" class="map-agent-toolbar"></div>
-          <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
-            ${("AMap" in window) ? "" : `${flatMapZonesHTML()}
-            <canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>
-            <div id="mockMapPins" class="map-pins-layer"></div>`}
+      <div class="${TW.refDiscover}" id="refDiscoverRoot">
+        <div class="${TW.refMapBlock}">
+          <div class="${TW.refMapHeading}" id="refMapHeading"></div>
+          <div id="mapAgentToolbar" class="${TW.refMapChips}"></div>
+          <div class="${TW.refMapCard}">
+            <div class="${TW.refMapVisual}" id="refMapVisual">
+              <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map is-heat-view"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
+                ${("AMap" in window) ? "" : `${flatMapZonesHTML()}
+                <canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.66;border-radius:0;"></canvas>
+                <div id="mockMapPins" class="map-pins-layer"></div>`}
+              </div>
+              <div class="${TW.refMapOverlay}">
+                <div id="refMapBubbles" class="map-float-tags"></div>
+                <div id="refMapFooter" class="${TW.refMapFooter}"></div>
+                <button type="button" class="${TW.refMapLocate}" id="refMapLocate" aria-label="定位到我的位置">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="#1A73E8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#1A73E8" stroke-width="2" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+            </div>
           </div>
-          <p class="map-layout-legend" id="mapLayoutLegend"></p>
-        </section>
-        <section id="poiSheet" class="merchant-block poi-sheet card"></section>
+        </div>
+        <section id="poiSheet" class="${TW.refPoiCard}"></section>
       </div>
     `;
+    document.getElementById("refMapLocate")?.addEventListener("click", () => {
+      syncMapRangeOverlay();
+      showToast(`已定位到 ${getCurrentCircle().shortName}`);
+    });
     initMockMap();
   }
+  updateRefRadiusRow();
+  updateRefMapHeading();
   updateMapControls();
   updateMapStats();
   updateSceneNavigator();
@@ -1401,40 +1432,155 @@ function renderMapPage() {
       renderMockMapPins();
       setTimeout(renderHeatCanvas, 0);
     }
+    updateRefMapVisual();
     updatePOISheet();
   } else if (appState.selectedPOI) {
+    updateRefMapVisual();
     updatePOISheet();
   }
+}
+
+function updateRefRadiusRow() {
+  const el = document.getElementById("refRadiusRow");
+  if (!el) return;
+  const km = currentBrowseRadiusKm();
+  el.innerHTML = [
+    [5, "5km · 推荐"],
+    [2, "2km · 附近"],
+    [0.5, "500m · 步行"]
+  ].map(([value, label]) => `
+    <button type="button" class="${TW.radiusPill} ${Math.abs(km - value) < 0.01 ? "is-active" : ""}" data-ref-radius="${value}">${label}</button>
+  `).join("");
+  el.querySelectorAll("[data-ref-radius]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applyBrowseRadius(Number(btn.dataset.refRadius));
+      showToast(`浏览范围已更新为 ${currentBrowseRadiusKm() >= 1 ? `${currentBrowseRadiusKm()}km` : "500m"}`);
+    });
+  });
+}
+
+function updateRefMapHeading() {
+  const el = document.getElementById("refMapHeading");
+  if (!el) return;
+  const circle = getCurrentCircle();
+  const poi = appState.selectedPOI;
+  el.innerHTML = `
+    <b>${escapeHTML(circle.shortName)} · ${escapeHTML(sceneFilterLabel())}</b>
+    <small>${poi ? escapeHTML(poi.name) : "Agent 帮你选最适合成局的地方"}</small>
+  `;
+}
+
+function updateRefMapVisual() {
+  updateRefBubbles();
+  updateRefMapFooter();
+}
+
+function updateRefBubbles() {
+  const el = document.getElementById("refMapBubbles");
+  if (!el) return;
+  const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
+  const clusters = buildMapClusters(list);
+  const selectedPoi = appState.selectedPOI;
+  const bubblePos = {
+    food: { x: 22, y: 44 },
+    night: { x: 18, y: 72 },
+    play: { x: 72, y: 30 },
+    sport: { x: 74, y: 68 }
+  };
+  el.innerHTML = MAP_CLUSTER_DEFS.map((def) => {
+    const cluster = clusters.find((c) => c.id === def.id);
+    const demand = cluster ? cluster.totalDemand : 0;
+    const isActive = selectedPoi && cluster && cluster.members.some((p) => p.poi_id === selectedPoi.poi_id);
+    const pos = bubblePos[def.id] || { x: def.x, y: def.y };
+    return `
+      <button type="button" class="${TW.refBubble} ${isActive ? "is-active" : ""}" data-ref-cluster="${def.id}"
+        style="left:${pos.x}%;top:${pos.y}%;">
+        <span class="${TW.refBubbleDot}" style="background:${def.accent}"></span>
+        ${escapeHTML(def.label)}
+        ${demand ? `<span class="${TW.refBubbleMeta}">${demand}人</span>` : ""}
+      </button>
+    `;
+  }).join("");
+  el.querySelectorAll("[data-ref-cluster]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const cluster = buildMapClusters(list).find((c) => c.id === btn.dataset.refCluster);
+      if (cluster && cluster.members[0]) {
+        appState.selectedPOI = cluster.members[0];
+        appState.mapManualPOI = true;
+        appState.mapExpandedClusterId = cluster.id;
+        refreshMapSupply();
+        updateRefMapHeading();
+        renderMockMapPins();
+        updateRefMapVisual();
+        updatePOISheet();
+      }
+    });
+  });
+}
+
+function updateRefMapFooter() {
+  const el = document.getElementById("refMapFooter");
+  if (!el) return;
+  const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
+  const ranked = rankedMapPois(list);
+  const best = appState.selectedPOI || ranked[0];
+  const score = best ? computeOpportunityScore(best) : 0;
+  el.innerHTML = `
+    <b>${score || "—"} 分</b>
+    <span>${best ? `优先看 ${escapeHTML(best.name)}` : "换个范围发现更多"}</span>
+  `;
+}
+
+function updateRefStickyBar(poi, demands) {
+  /* actions rendered inline in updatePOISheet */
+}
+
+function bindRefPoiActions(poi, demands) {
+  document.getElementById("matchFromPoi")?.addEventListener("click", () => {
+    appState.userInput = defaultIntentTextForPoi(poi);
+    appState.poiConstraint = poi;
+    appState.currentPage = "ai";
+    appState.parsedIntent = null;
+    appState.matchResults = [];
+    appState.aiHasRun = false;
+    showToast("已将该地点加入匹配条件");
+    render();
+    setTimeout(() => runAI(), 450);
+  });
+  document.getElementById("poiJoinBtn")?.addEventListener("click", () => {
+    const d = demands[0];
+    if (d) joinDemandFromRefSheet(d.demand_id, poi, demands);
+    else showToast("暂无等待中的局，已为你发起搭子匹配");
+  });
+  document.getElementById("poiNavBtn")?.addEventListener("click", () => showPoiNavHint(poi));
+}
+
+function joinDemandFromRefSheet(demandId, poi, demands) {
+  const targetDemand = demands.find((d) => d.demand_id === demandId) || demands[0];
+  if (!targetDemand) return;
+  const intent = {
+    activity_type: categoryToActivity(poi),
+    category_preference: poi.sub_category,
+    budget_min: Math.floor(poi.avg_price * 0.8),
+    budget_max: poi.avg_price,
+    social_style: targetDemand.style,
+    group_size: targetDemand.size,
+    target_time: "今晚",
+    distance_tolerance_km: 2
+  };
+  selectMatch({ match_id: `joined_${targetDemand.demand_id}`, user: targetDemand.demandUser, poi, total_score: 85, user_score: 83, place_score: 87, score_breakdown: {}, suggested_time: targetDemand.time, backup_poi: findDealBackup(poi), explanation: `你加入了 ${targetDemand.nickname} 在 ${poi.name} 发起的搭子局。`, intent });
 }
 
 function updateMapControls() {
   const el = document.getElementById("mapAgentToolbar");
   if (!el) return;
-  const circle = getCurrentCircle();
-  const ranked = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
-  const best = ranked[0];
-  const bestScore = best ? computeOpportunityScore(best) : 0;
+  const km = currentBrowseRadiusKm();
   el.innerHTML = `
-    <div class="map-agent-copy">
-      <span>Agent 地图</span>
-      <b>${escapeHTML(circle.shortName)} · ${escapeHTML(sceneFilterLabel())}</b>
-      <small>${best ? `最佳机会 ${bestScore} 分 · ${escapeHTML(best.name)}` : "当前范围暂无地点"}</small>
-    </div>
-    <div class="map-agent-controls">
-      <div class="map-layer-switch" aria-label="地图图层">
-        ${[
-          ["normal", "普通"],
-          ["heat", "热力"]
-        ].map(([value, label]) => `
-          <button type="button" class="${appState.mapLayer === value ? "is-active" : ""}" data-map-layer="${value}">${label}</button>
-        `).join("")}
-      </div>
-      <div class="map-range-switch" aria-label="浏览范围">
-        ${[2, 3, 5].map((km) => `
-          <button type="button" class="${currentBrowseRadiusKm() === km ? "is-active" : ""}" data-map-radius="${km}">${km}km</button>
-        `).join("")}
-      </div>
-    </div>
+    <button type="button" class="${TW.refMapChip} ${appState.mapLayer === "normal" ? "is-active" : ""}" data-map-layer="normal">推荐</button>
+    <button type="button" class="${TW.refMapChip} ${appState.mapLayer === "heat" ? "is-active" : ""}" data-map-layer="heat">热力</button>
+    ${[2, 3, 5].map((radius) => `
+      <button type="button" class="${TW.refMapChip} ${Math.abs(km - radius) < 0.01 ? "is-active" : ""}" data-map-radius="${radius}">${radius}km</button>
+    `).join("")}
   `;
   el.querySelectorAll("[data-map-layer]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -1444,6 +1590,7 @@ function updateMapControls() {
       updateMapControls();
       syncMapLayerState();
       renderMockMapPins();
+      updateRefMapVisual();
       renderHeatCanvas();
     });
   });
@@ -1575,6 +1722,9 @@ function refreshMapSupply() {
       setTimeout(renderHeatCanvas, 0);
     }
     updatePOISheet();
+    updateRefMapVisual();
+    updateRefRadiusRow();
+    updateRefMapHeading();
     updateMapControls();
     updateMapStats();
     updateSceneNavigator();
@@ -1586,7 +1736,10 @@ function initMockMap() {
   if (!appState.selectedCircleId && lifeCircles[0]) appState.selectedCircleId = lifeCircles[0].id;
   gaodePOIs = filteredMockPois(appState.selectedCategory);
   const preSelected = appState.selectedPOI && gaodePOIs.some((p) => p.poi_id === appState.selectedPOI.poi_id);
-  if (!preSelected || !appState.mapManualPOI) appState.selectedPOI = rankedMapPois(gaodePOIs)[0] || null;
+  if (!preSelected || !appState.mapManualPOI) {
+    const preferred = gaodePOIs.find((p) => p.poi_id === "poi_039");
+    appState.selectedPOI = preferred || rankedMapPois(gaodePOIs)[0] || null;
+  }
   if ("AMap" in window) {
     initRealMap();
   } else {
@@ -1599,6 +1752,7 @@ function initFakeMap() {
   renderMockMapPins();
   setTimeout(renderHeatCanvas, 0);
   updateMapStats();
+  updateRefMapVisual();
   updatePOISheet();
 }
 
@@ -1623,6 +1777,7 @@ function initRealMap() {
     mockMapReady = true;
     renderAmapPins();
     updateMapStats();
+    updateRefMapVisual();
     updatePOISheet();
   } catch (err) {
     console.warn("[AMap] 初始化失败，降级为平面示意地图", err);
@@ -1763,19 +1918,35 @@ function renderMockMapPins() {
   if (!layer) return;
   const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
   const ranked = rankedMapPois(list);
-  const clusters = buildMapClusters(list);
-  const expanded = activeMapCluster(clusters);
   const selectedPoi = appState.mapManualPOI && appState.selectedPOI && list.some((p) => p.poi_id === appState.selectedPOI.poi_id)
     ? appState.selectedPOI
-    : ranked[0];
+    : (appState.selectedPOI && list.some((p) => p.poi_id === appState.selectedPOI.poi_id) ? appState.selectedPOI : ranked[0]);
   if (selectedPoi && (!appState.selectedPOI || appState.selectedPOI.poi_id !== selectedPoi.poi_id)) {
     appState.selectedPOI = selectedPoi;
   }
 
+  const routeHTML = navigationRouteHTML(selectedPoi);
+  const isRefDiscover = !!document.getElementById("refDiscoverRoot");
+
+  if (isRefDiscover) {
+    const pos = selectedPoi ? poiMapPercent(selectedPoi) : { x: 50, y: 50 };
+    const destHTML = selectedPoi ? `
+      <div class="${TW.refMapDest}" style="left:${pos.x}%;top:${pos.y}%;">
+        <span class="${TW.refMapDestDot}"></span>
+        ${escapeHTML(selectedPoi.name)}
+      </div>
+    ` : "";
+    layer.innerHTML = routeHTML + destHTML;
+    updateRefMapFooter();
+    updateRefMapHeading();
+    return;
+  }
+
+  const clusters = buildMapClusters(list);
+  const expanded = activeMapCluster(clusters);
   const featuredIds = new Set(ranked.slice(0, appState.mapLayer === "heat" ? 1 : 5).map((p) => p.poi_id));
   const visiblePois = expanded ? expanded.members.slice(0, 10) : ranked.filter((p) => featuredIds.has(p.poi_id));
   const topScore = ranked[0] ? computeOpportunityScore(ranked[0]) : 0;
-  const routeHTML = navigationRouteHTML(selectedPoi);
   const clusterHTML = clusters.map((cluster, index) => {
     const isActive = expanded && expanded.id === cluster.id;
     const hiddenByExpansion = expanded && !isActive;
@@ -1814,6 +1985,7 @@ function renderMockMapPins() {
       const nextCluster = buildMapClusters(list).find((cluster) => cluster.id === appState.mapExpandedClusterId);
       if (nextCluster && nextCluster.members[0]) appState.selectedPOI = nextCluster.members[0];
       renderMockMapPins();
+      updateRefMapVisual();
       updatePOISheet();
       syncMapLayerState();
     });
@@ -1830,6 +2002,7 @@ function renderMockMapPins() {
       appState.selectedPOI = poi;
       appState.mapManualPOI = true;
       renderMockMapPins();
+      updateRefMapVisual();
       updatePOISheet();
       const sheet = document.getElementById("poiSheet");
       if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1943,15 +2116,9 @@ function updateMapStats() {
   if (!el) return;
   const list = gaodePOIs.length ? gaodePOIs : pois;
   const totalBuddy = list.reduce((sum, p) => sum + (p.buddy_demand_count || 0), 0);
-  const formingCount = list.reduce((sum, p) => sum + Math.max(0, Math.round((p.buddy_demand_count || 0) / 4)), 0);
-  const hotCount = list.filter((p) => isHotPoi(p)).length;
-  const radiusKm = currentBrowseRadiusKm();
   el.innerHTML = `
-    <div class="stat-pill is-brand"><b>${radiusKm}km</b><span>搜索范围</span></div>
-    <div class="stat-pill"><b>${list.length}</b><span>附近地点</span></div>
-    <div class="stat-pill is-hot"><b>${totalBuddy}</b><span>人今日想出门</span></div>
-    <div class="stat-pill" style="background:#fffdf0;border:1px solid #ffe88a;"><b style="color:#92700a;">${formingCount}</b><span>个即将成局</span></div>
-    <div class="stat-pill"><b>${hotCount}</b><span>热门地点</span></div>
+    <div class="${TW.statCard}"><b>${totalBuddy}</b><span>人今日想出门</span></div>
+    <div class="${TW.statCard}"><b>${list.length}</b><span>个附近可去的地方</span></div>
   `;
   updateAreaPill();
 }
@@ -1983,156 +2150,88 @@ function updatePOISheet() {
   if (!el) return;
   if (!appState.selectedPOI) {
     el.innerHTML = `
-      <div class="map-merchant-body">
-        <section class="map-merchant-section">
-          <div class="map-merchant-section-head">
-            <h3>暂无匹配地点</h3>
-            <span>${escapeHTML(sceneFilterLabel())}</span>
-          </div>
-          <p>当前生活圈和类型下没有可显示的商家，去发现里换个圈子或类型。</p>
-        </section>
+      <div class="${TW.refPoiBody}">
+        <p class="${TW.muted}">当前生活圈和类型下没有可显示的商家，换个圈子或类型试试。</p>
       </div>
     `;
     return;
   }
   const poi = appState.selectedPOI;
-  const matchScoreMap = {};
-  appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
-  const matchScore = matchScoreMap[poi.poi_id];
   const demands = getFakeDemands(poi);
   const visibleDemands = demands.slice(0, 2);
   const fit = merchantFitSummary(poi);
   const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
   const dealText = merchantDealShort(poi);
   const opportunityScore = computeOpportunityScore(poi);
+  const opp = opportunitySummaryForPoi(poi);
   const reasons = opportunityReasons(poi);
   el.innerHTML = `
-    <div class="merchant-hero" style="background-image:url('${poiCoverImage(poi)}')"></div>
-    <div class="merchant-detail-body map-merchant-body">
-      <div class="map-merchant-title">
-        <div>
-          <h2 class="merchant-name">${escapeHTML(poi.name)}</h2>
-          <p>${poi.rating} ★ · ${escapeHTML(poi.sub_category)} · 人均 <b>¥${poi.avg_price}</b> · ${poi.distance_km}km</p>
-        </div>
-        <span class="open-badge">${escapeHTML(poi.open_status || "营业中")}</span>
+    <div class="${TW.refPoiHero}" style="background-image:url('${poiCoverImage(poi)}')"></div>
+    <div class="${TW.refPoiBody}">
+      <div class="${TW.refPoiTitleRow}">
+        <h2>${escapeHTML(poi.name)}</h2>
+        <span class="${TW.refPoiOpen}">${escapeHTML(poi.open_status || "营业中")}</span>
       </div>
-      <div class="map-merchant-meta">
-        <span>等待 ${poi.wait_time_min} 分钟</span>
-        <span>步行约 ${walkMin} 分钟</span>
-        <span>${poi.business_hours ? `营业 ${escapeHTML(poi.business_hours)}` : "营业时间待确认"}</span>
-      </div>
+      <p class="${TW.refPoiRating}"><b>${poi.rating}</b> ★ · ${escapeHTML(poi.sub_category)} · 人均 ¥${poi.avg_price} · ${poi.distance_km}km</p>
+      <p class="${TW.refPoiStatus}">等待 ${poi.wait_time_min} 分钟 · 步行约 ${walkMin} 分钟 · ${poi.business_hours ? `营业 ${escapeHTML(poi.business_hours)}` : "营业时间待确认"}</p>
 
-      <div class="map-merchant-brief-grid">
+      <div class="${TW.refPoiMetrics}">
         <div><b>${poi.rating}</b><span>评分</span></div>
         <div><b>${poi.wait_time_min} 分钟</b><span>${merchantWaitLabel(poi)}</span></div>
         <div><b>${walkMin} 分钟</b><span>步行约</span></div>
         <div><b>${poi.buddy_demand_count} 人</b><span>最近想约</span></div>
       </div>
 
-      ${(() => {
-        const opp = opportunitySummaryForPoi(poi);
-        const formingLabel = opp.formingCount >= 2 ? `${opp.formingCount} 个即将成局` : "随时可加入";
-        return `
-          <div class="map-opportunity-card">
-            <div class="map-opportunity-head">
-              <div>
-                <span>Agent 判断</span>
-                <b>${opportunityScore} 分机会</b>
-              </div>
-              <strong>${formingLabel}</strong>
-            </div>
-            <div class="map-opportunity-grid">
-              <div><b>${opp.demandCount}</b><span>人最近想约</span></div>
-              <div><b>${escapeHTML(merchantWaitLabel(poi))}</b><span>等待状态</span></div>
-              <div><b>${opp.waitLabel}</b><span>当前等待</span></div>
-              <div><b>${opp.savedLabel}</b><span>团购优惠</span></div>
-            </div>
-            <ul class="map-opportunity-reasons">
-              ${reasons.slice(0, 3).map((reason) => `<li>${escapeHTML(reason)}</li>`).join("")}
-            </ul>
-          </div>
-        `;
-      })()}
-
-      <section class="map-merchant-section">
-        <div class="map-merchant-section-head">
-          <h3>适合这样约</h3>
-          ${matchScore ? `<span class="sheet-match">AI ${matchScore}%</span>` : `<span>Agent ${opportunityScore}</span>`}
+      <div class="${TW.refPickCard}">
+        <div class="${TW.refPickTop}">
+          <span class="${TW.refPickBadge}">${opportunityScore} 分机会</span>
+          <span class="${TW.refPickForming}">${opp.formingCount >= 2 ? `${opp.formingCount} 个即将成局` : "随时可加入"}</span>
         </div>
-        <b>${escapeHTML(fit.title)}</b>
-        <p>${escapeHTML(fit.text)}</p>
-        <div class="map-merchant-chip-row">
+        <div class="${TW.refOppGrid}">
+          <div><b>${opp.demandCount}</b><span>人最近想约</span></div>
+          <div><b>${escapeHTML(merchantWaitLabel(poi))}</b><span>等待状态</span></div>
+          <div><b>${opp.waitLabel}</b><span>当前等待</span></div>
+          <div><b>${opp.savedLabel}</b><span>团购优惠</span></div>
+        </div>
+        <ul class="${TW.refOppList}">
+          ${reasons.slice(0, 3).map((r) => `<li>${escapeHTML(r)}</li>`).join("")}
+        </ul>
+        <div class="${TW.refPickTags}">
           ${fit.chips.slice(0, 3).map((chip) => `<span>${escapeHTML(chip)}</span>`).join("")}
         </div>
-      </section>
-
-      <section class="map-merchant-deal-card">
-        <span class="deal-tag">团</span>
-        <div>
-          <b>${escapeHTML(dealText)}</b>
-          <p>到店前先看券，预算更好对齐。</p>
-        </div>
-        <strong>看券</strong>
-      </section>
-
-      <section class="map-merchant-section map-merchant-live">
-        <div class="map-merchant-section-head">
-          <h3>现在有人想去</h3>
-          <span>此刻</span>
-        </div>
-        ${visibleDemands.map((d) => demandCardHTML(d, appState.selectedDemandId === d.demand_id)).join("")
-          || `<p class="empty">这个地点暂无等待中的局，可以直接发起一个。</p>`}
-      </section>
-
-      <div class="map-merchant-info-line">
-        <span>${escapeHTML(poi.address || `${areaShort || area} · ${poi.sub_category}`)}</span>
       </div>
 
-      <div class="map-merchant-actions">
-        <button class="cta-match-btn map-agent-main" id="matchFromPoi">让 Agent 安排</button>
-        <button type="button" class="cta-nav-btn" id="poiJoinBtn">加入这个局</button>
-        <button type="button" class="cta-nav-btn" id="poiNavBtn">我也想去</button>
+      <div class="${TW.refDealBar}">
+        <span class="${TW.refDealIcon}">团</span>
+        <div>
+          <b>${escapeHTML(dealText)}</b>
+          <small>到店前先看券，预算更好对齐</small>
+        </div>
+        <button type="button" class="${TW.refDealLink}">查看</button>
+      </div>
+
+      <div class="${TW.refLiveHead}">
+        <h3>现在有人想去</h3>
+        <span>此刻</span>
+      </div>
+      ${visibleDemands.length
+        ? visibleDemands.map((d) => refDemandRowHTML(d)).join("")
+        : `<p class="${TW.muted}" style="padding:8px 0;">这个地点暂无等待中的局，可以直接发起一个。</p>`}
+
+      <div class="${TW.refPoiActions}">
+        <button type="button" class="${TW.refBtnPrimary}" id="matchFromPoi">让 Agent 安排</button>
+        <div class="${TW.refBtnRow}">
+          <button type="button" class="${TW.refBtnSecondary}" id="poiJoinBtn">加入这个局</button>
+          <button type="button" class="${TW.refBtnSecondary}" id="poiNavBtn">我也想去</button>
+        </div>
       </div>
     </div>
   `;
-  document.getElementById("matchFromPoi").addEventListener("click", () => {
-    appState.userInput = defaultIntentTextForPoi(poi);
-    appState.poiConstraint = poi;
-    appState.currentPage = "ai";
-    appState.parsedIntent = null;
-    appState.matchResults = [];
-    appState.aiHasRun = false;
-    showToast("已将该地点加入匹配条件");
-    render();
-    setTimeout(() => runAI(), 450);
+  el.querySelectorAll(".ref-live-row[data-demand]").forEach((card) => {
+    card.addEventListener("click", () => joinDemandFromRefSheet(card.dataset.demand, poi, demands));
   });
-  document.getElementById("poiNavBtn")?.addEventListener("click", () => showPoiNavHint(poi));
-  document.getElementById("poiJoinBtn")?.addEventListener("click", () => {
-    const d = demands[0];
-    if (d) joinDemandFromMapSheet(d.demand_id);
-    else showToast("暂无等待中的局，已为你发起搭子匹配");
-  });
-  const joinDemandFromMapSheet = (demandId) => {
-    const targetDemand = demands.find((d) => d.demand_id === demandId) || demands.find((d) => d.demand_id === appState.selectedDemandId) || demands[0];
-    if (!targetDemand) return;
-    const intent = {
-      activity_type: categoryToActivity(poi),
-      category_preference: poi.sub_category,
-      budget_min: Math.floor(poi.avg_price * 0.8),
-      budget_max: poi.avg_price,
-      social_style: targetDemand.style,
-      group_size: targetDemand.size,
-      target_time: "今晚",
-      distance_tolerance_km: 2
-    };
-    selectMatch({ match_id: `joined_${targetDemand.demand_id}`, user: targetDemand.demandUser, poi, total_score: 85, user_score: 83, place_score: 87, score_breakdown: {}, suggested_time: targetDemand.time, backup_poi: findDealBackup(poi), explanation: `你加入了 ${targetDemand.nickname} 在 ${poi.name} 发起的搭子局。`, intent });
-  };
-  el.querySelectorAll(".map-demand-row[data-demand]").forEach((card) => {
-    card.addEventListener("click", () => {
-      appState.selectedDemandId = card.dataset.demand;
-      joinDemandFromMapSheet(card.dataset.demand);
-    });
-  });
+  bindRefPoiActions(poi, demands);
+  updateRefMapHeading();
 }
 
 function opportunitySummaryForPoi(poi) {
@@ -2147,21 +2246,36 @@ function opportunitySummaryForPoi(poi) {
   };
 }
 
+function refDemandRowHTML(demand) {
+  const user = demand.demandUser || {};
+  const verified = user.verified_status;
+  return `
+    <button type="button" class="${TW.refLiveRow}" data-demand="${demand.demand_id}">
+      <span class="${TW.refLiveAvatar}">${escapeHTML(String(demand.nickname || "搭")[0])}</span>
+      <span class="${TW.refLiveBody}">
+        <b>${escapeHTML(demand.time || "今晚")} · ${escapeHTML(demand.size || "1v1")}${verified ? `<span class="${TW.refVerified}">已验证</span>` : ""}</b>
+        <p>${escapeHTML(demand.note || demand.style || "轻松组局")}</p>
+      </span>
+      <span class="${TW.refLiveJoin}">加入</span>
+    </button>
+  `;
+}
+
 function demandCardHTML(demand, isSelected) {
   const user = demand.demandUser || {};
   const verified = user.verified_status;
   return `
-    <button type="button" class="map-demand-row ${isSelected ? "is-selected" : ""}" data-demand="${demand.demand_id}">
-      <div class="map-demand-avatar">${escapeHTML(String(demand.nickname || "搭")[0])}</div>
-      <div class="map-demand-body">
+    <button type="button" class="${TW.mapDemandRow} ${isSelected ? "is-selected" : ""}" data-demand="${demand.demand_id}">
+      <div class="${TW.mapDemandAvatar}">${escapeHTML(String(demand.nickname || "搭")[0])}</div>
+      <div class="${TW.mapDemandBody}">
         <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
           <b style="font-size:13px;">${escapeHTML(demand.time || "今晚")}</b>
-          ${verified ? `<span class="verified-badge">已验证</span>` : ""}
+          ${verified ? `<span class="${TW.verifiedBadge}">已验证</span>` : ""}
           <span style="font-size:11px;color:#6b7280;">${escapeHTML(demand.size || "1v1")}</span>
         </div>
         <p style="font-size:12px;color:#6b7280;margin-top:1px;">${escapeHTML(demand.note || demand.style || "轻松组局")}</p>
       </div>
-      <span class="map-demand-join">加入</span>
+      <span class="${TW.mapDemandJoin}">加入</span>
     </button>
   `;
 }
@@ -2691,30 +2805,30 @@ function renderAgentMemoryCard() {
     ["团购偏好", mem.deal_preference]
   ];
   return `
-    <section class="card agent-memory-card">
+    <section class="${TW.card} ${TW.agentMemoryCard}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div>
-          <p class="eyebrow">你的专属 Agent 记忆</p>
+          <p class="${TW.eyebrow}">你的专属 Agent 记忆</p>
           <p style="font-size:12px;color:#6b7280;margin-top:2px;">从浏览、收藏、历史成局和反馈中学到</p>
         </div>
-        <div class="agent-memory-dot"></div>
+        <div class="${TW.agentMemoryDot}"></div>
       </div>
-      <div class="agent-memory-grid">
+      <div class="${TW.agentMemoryGrid}">
         ${rows.map(([label, val]) => `
-          <div class="agent-memory-row">
-            <span class="agent-memory-label">${label}</span>
-            <span class="agent-memory-val">${escapeHTML(val)}</span>
+          <div class="${TW.agentMemoryRow}">
+            <span class="${TW.agentMemoryLabel}">${label}</span>
+            <span class="${TW.agentMemoryVal}">${escapeHTML(val)}</span>
           </div>
         `).join("")}
       </div>
       <div style="margin-top:10px;">
         <p style="font-size:11px;color:#9ca3af;margin-bottom:6px;">来自历史行为</p>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${(mem.learned_from.accepted_plans || []).map((p) => `<span class="memory-chip accepted">${escapeHTML(p)}</span>`).join("")}
-          ${(mem.learned_from.rejected_reasons || []).map((r) => `<span class="memory-chip rejected">✗ ${escapeHTML(r)}</span>`).join("")}
+          ${(mem.learned_from.accepted_plans || []).map((p) => `<span class="${TW.memoryChip} accepted">${escapeHTML(p)}</span>`).join("")}
+          ${(mem.learned_from.rejected_reasons || []).map((r) => `<span class="${TW.memoryChip} rejected">✗ ${escapeHTML(r)}</span>`).join("")}
         </div>
       </div>
-      ${notice ? `<div class="agent-memory-notice result-fade">${escapeHTML(notice)}</div>` : ""}
+      ${notice ? `<div class="${TW.agentMemoryNotice} result-fade">${escapeHTML(notice)}</div>` : ""}
     </section>
   `;
 }
@@ -2787,25 +2901,25 @@ function renderAIPage() {
     ? [mood.mood_label, mood.energy ? `${mood.energy}能量` : "", mood.social_style, mood.recommended_category || mood.activity_strategy].filter(Boolean)
     : ["自然语言", "情绪理解", "自动成局"];
   $("#aiPage").innerHTML = `
-    <section class="card ai-card agent-console">
-      <div class="agent-head">
+    <section class="${TW.card} ${TW.aiCard} ${TW.agentConsole}">
+      <div class="${TW.agentHead}">
         <div>
-          <p class="eyebrow">我的专属 Agent</p>
+          <p class="${TW.eyebrow}">我的专属 Agent</p>
           <h2>只说今天的状态，Agent 会结合你的记忆自动完成</h2>
-          <p class="muted">你可以直接说状态、预算、距离或想避开的场景。</p>
+          <p class="${TW.muted}">你可以直接说状态、预算、距离或想避开的场景。</p>
         </div>
-        <div class="agent-status ${appState.aiLoading ? "is-thinking" : appState.matchResults.length ? "is-ready" : ""}">
+        <div class="${TW.agentStatus} ${appState.aiLoading ? "is-thinking" : appState.matchResults.length ? "is-ready" : ""}">
           <span></span>
           <b>${appState.aiLoading ? "思考中" : appState.matchResults.length ? "已安排" : "待命"}</b>
         </div>
       </div>
-      <div class="agent-input-shell">
+      <div class="${TW.agentInputShell}">
         <textarea id="intentInput" aria-label="告诉 AI 你的出门需求">${escapeHTML(appState.userInput)}</textarea>
-        <div class="agent-signal-row">
+        <div class="${TW.agentSignalRow}">
           ${moodSignals.slice(0, 4).map((signal) => `<span>${escapeHTML(signal)}</span>`).join("")}
         </div>
       </div>
-      <div class="prompt-row agent-prompts">
+      <div class="prompt-row ${TW.agentPrompts}">
         <button data-prompt="今天心情不好，想找个人安静坐会儿，离我近一点，预算 50 以内。">心情不好</button>
         <button data-prompt="今晚想找一个人吃韩餐，预算 80 元以内，不想太尴尬，最好轻松聊聊，离我不要太远。">韩餐 1v1</button>
         <button data-prompt="压力有点大，想找个新手友好的攀岩搭子，预算 120 元以内。">释放压力</button>
@@ -2813,9 +2927,9 @@ function renderAIPage() {
         <button data-prompt="今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。">KTV 多人</button>
         <button data-prompt="今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。">聚会桌游</button>
       </div>
-      <div class="agent-actions">
-        <button class="primary-button wide ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "Agent 正在安排" : "让 Agent 安排方案"}</button>
-        <label class="agent-toggle">
+      <div class="${TW.agentActions}">
+        <button class="${TW.primaryButton} ${TW.wide} ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "Agent 正在安排" : "让 Agent 安排方案"}</button>
+        <label class="${TW.agentToggle}">
           <input id="sparseModeToggle" type="checkbox" ${appState.sparseMode ? "checked" : ""} />
           <span>稀疏供给演示</span>
         </label>
@@ -2951,12 +3065,12 @@ function renderAIDirectorCard() {
   const layer = appState.aiDirector.merchant_layer || {};
   const profile = appState.aiDirector.agent_profile || appState.aiMoodProfile || {};
   return `
-    <section class="card ai-state is-done agent-brief">
-      <div class="analyzing-dot"></div>
+    <section class="${TW.card} ${TW.aiState} is-done agent-brief">
+      <div class="${TW.analyzingDot}"></div>
       <div>
         <b>AI Agent 已自动安排</b>
         <p>${escapeHTML(appState.aiDirector.director_brief || layer.summary || "已生成可执行方案。")}</p>
-        <div class="agent-brief-grid">
+        <div class="${TW.agentBriefGrid}">
           <span><b>${escapeHTML(profile.mood_label || "意图明确")}</b><small>状态</small></span>
           <span><b>${Math.round((profile.confidence || 0.76) * 100)}%</b><small>理解置信度</small></span>
           <span><b>${escapeHTML(appState.matchResults[0]?.total_score ? `${appState.matchResults[0].total_score}分` : "已评分")}</b><small>首选方案</small></span>
@@ -2971,7 +3085,7 @@ function renderAIDirectorCard() {
 function renderIntentCard() {
   if (appState.aiLoading) return "";
   if (!appState.parsedIntent) {
-    return `<section class="card ai-state"><div class="analyzing-dot"></div><div><b>Agent 正在等待输入</b><p>输入后会同时理解语义、情绪、预算、时间和距离。</p></div></section>`;
+    return `<section class="${TW.card} ${TW.aiState}"><div class="${TW.analyzingDot}"></div><div><b>Agent 正在等待输入</b><p>输入后会同时理解语义、情绪、预算、时间和距离。</p></div></section>`;
   }
   const i = appState.parsedIntent;
   const mood = appState.aiMoodProfile;
@@ -2995,15 +3109,15 @@ function renderIntentCard() {
     return avoid.length ? avoid.join("，") : "结合记忆综合匹配";
   })();
   return `
-    <section class="card ai-state is-done agent-parse-card">
-      <div class="analyzing-dot"></div>
+    <section class="${TW.card} ${TW.aiState} is-done ${TW.agentParseCard}">
+      <div class="${TW.analyzingDot}"></div>
       <div style="width:100%;">
         <b>Agent 理解结果</b>
-        <div class="intent-analysis-grid">
-          ${moodLabel ? `<div class="intent-row"><span class="intent-row-label">当前状态</span><span>${escapeHTML(moodLabel)}</span></div>` : ""}
-          ${hardConditions.length ? `<div class="intent-row"><span class="intent-row-label">硬条件</span><span>${hardConditions.map(escapeHTML).join("、")}</span></div>` : ""}
-          ${softPrefs.length ? `<div class="intent-row"><span class="intent-row-label">软偏好</span><span>${softPrefs.map(escapeHTML).join("、")}</span></div>` : ""}
-          <div class="intent-row"><span class="intent-row-label">Agent 判断</span><span>${escapeHTML(agentJudgment)}</span></div>
+        <div class="${TW.intentAnalysisGrid}">
+          ${moodLabel ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">当前状态</span><span>${escapeHTML(moodLabel)}</span></div>` : ""}
+          ${hardConditions.length ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">硬条件</span><span>${hardConditions.map(escapeHTML).join("、")}</span></div>` : ""}
+          ${softPrefs.length ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">软偏好</span><span>${softPrefs.map(escapeHTML).join("、")}</span></div>` : ""}
+          <div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">Agent 判断</span><span>${escapeHTML(agentJudgment)}</span></div>
         </div>
         <p style="margin-top:8px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
           ${confidenceLow ? "低置信度待澄清" : "AI 分析完成"}（置信度 ${Math.round((i.parse_confidence || 0.8) * 100)}%）
@@ -3041,14 +3155,14 @@ function renderAgentClarifyCard() {
     ? "我可以帮你安排，但再确认一下：你更想放松，还是来点轻运动？"
     : `差一个判断：${missingSlots.join("或")}大概是什么范围？`;
   const chips = Array.isArray(questions) && questions.length
-    ? questions.slice(0, 3).map((q, idx) => `<button class="clarify-chip" data-clarify="${idx}">${escapeHTML(q)}</button>`).join("")
+    ? questions.slice(0, 3).map((q, idx) => `<button class="${TW.clarifyChip}" data-clarify="${idx}">${escapeHTML(q)}</button>`).join("")
     : ["随便逛逛", "吃顿饭就好", "预算 60 以内", "不要太远"].map((q) =>
-        `<button class="clarify-chip" data-clarify-text="${escapeHTML(q)}">${q}</button>`
+        `<button class="${TW.clarifyChip}" data-clarify-text="${escapeHTML(q)}">${q}</button>`
       ).join("");
   return `
-    <div class="agent-clarify-card result-fade">
-      <p class="agent-q">Agent：${escapeHTML(agentQ)}</p>
-      <div class="clarify-chips">${chips}</div>
+    <div class="${TW.agentClarifyCard} result-fade">
+      <p class="${TW.agentQ}">Agent：${escapeHTML(agentQ)}</p>
+      <div class="${TW.clarifyChips}">${chips}</div>
     </div>
   `;
 }
@@ -3066,14 +3180,14 @@ function renderPlanCompareTable() {
     ["时间", (m) => m.suggested_time]
   ];
   return `
-    <div class="plan-compare-table card">
-      <p class="eyebrow" style="margin-bottom:8px;">方案对比</p>
-      <div class="pct-grid" style="grid-template-columns: 52px ${plans.map(() => "1fr").join(" ")}">
-        <div class="pct-cell pct-header-cell"></div>
-        ${plans.map((_, i) => `<div class="pct-cell pct-header-cell plan-label-${planLabels[i]}">${planLabels[i]}</div>`).join("")}
+    <div class="${TW.planCompareTable} ${TW.card}">
+      <p class="${TW.eyebrow}" style="margin-bottom:8px;">方案对比</p>
+      <div class="${TW.pctGrid}" style="grid-template-columns: 52px ${plans.map(() => "1fr").join(" ")}">
+        <div class="${TW.pctCell} ${TW.pctHeaderCell}"></div>
+        ${plans.map((_, i) => `<div class="${TW.pctCell} ${TW.pctHeaderCell} plan-label-${planLabels[i]}">${planLabels[i]}</div>`).join("")}
         ${rows.map(([label, fn]) => `
-          <div class="pct-cell pct-row-label">${label}</div>
-          ${plans.map((m) => `<div class="pct-cell">${escapeHTML(String(fn(m)))}</div>`).join("")}
+          <div class="${TW.pctCell} ${TW.pctRowLabel}">${label}</div>
+          ${plans.map((m) => `<div class="${TW.pctCell}">${escapeHTML(String(fn(m)))}</div>`).join("")}
         `).join("")}
       </div>
     </div>
@@ -3090,9 +3204,9 @@ function renderAIProcess() {
     { label: "生成可执行方案", detail: "按「符合预算 · 距离近 · 已验证」优先排序" }
   ];
   return `
-    <section class="card ai-steps">
+    <section class="${TW.card} ${TW.aiSteps}">
       ${steps.map((step, index) => `
-        <div class="ai-step ${index < appState.aiStep ? "is-done" : ""} ${index === appState.aiStep ? "is-active" : ""}">
+        <div class="${TW.aiStep} ${index < appState.aiStep ? "is-done" : ""} ${index === appState.aiStep ? "is-active" : ""}">
           <span>${index + 1}</span>
           <div>
             <p style="font-weight:600;">${step.label}</p>
@@ -3108,29 +3222,29 @@ function renderMatchResults() {
   if (appState.aiLoading) return "";
   if (!appState.matchResults.length && appState.aiHasRun) {
     return `
-      <section class="card empty-state result-fade">
+      <section class="${TW.card} ${TW.emptyState} result-fade">
         <h2>当前没有完全匹配的搭子</h2>
         <p>${appState.sparseMode ? "当前供给较低，已进入稀疏兜底。" : "AI 已为你推荐最接近的方案。"}</p>
       </section>
-      ${appState.sparseMode ? `<section class="card" style="margin-top:8px;"><b>兜底建议</b><p style="margin-top:6px;color:#6b7280;">建议放宽时间或预算后重试，或切换到“今晚/周末”以扩大候选池。</p></section>` : ""}
+      ${appState.sparseMode ? `<section class="${TW.card}" style="margin-top:8px;"><b>兜底建议</b><p style="margin-top:6px;color:#6b7280;">建议放宽时间或预算后重试，或切换到“今晚/周末”以扩大候选池。</p></section>` : ""}
     `;
   }
   if (!appState.matchResults.length) return "";
   const fallbackBanner = appState.aiRuleFallback
-    ? `<div class="notice-card" style="background:#fffbeb;color:#92400e;">当前为 <b>规则层兜底</b>（L0），评分仍为本地真相源。</div>`
+    ? `<div class="${TW.noticeCard}" style="background:#fffbeb;color:#92400e;">当前为 <b>规则层兜底</b>（L0），评分仍为本地真相源。</div>`
     : "";
   return `
     <section class="result-section result-fade">
-      <div class="section-title">
+      <div class="${TW.sectionTitle}">
         <h2>Agent 安排的方案</h2>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          <button class="text-button" id="reshuffleResult">换一局</button>
-          <button class="text-button" id="changeTimeOnly">换一个时间</button>
-          <button class="text-button" id="simulateWaitFromResult">模拟排队变长</button>
+          <button class="${TW.textButton}" id="reshuffleResult">换一局</button>
+          <button class="${TW.textButton}" id="changeTimeOnly">换一个时间</button>
+          <button class="${TW.textButton}" id="simulateWaitFromResult">模拟排队变长</button>
         </div>
       </div>
       ${fallbackBanner}
-      ${appState.replanningNotice ? `<div class="notice-card">${appState.replanningNotice}</div>` : ""}
+      ${appState.replanningNotice ? `<div class="${TW.noticeCard}">${appState.replanningNotice}</div>` : ""}
       ${renderAgentClarifyCard()}
       ${renderPlanCompareTable()}
       ${appState.matchResults.map((match, index) => renderMatchCard(match, index)).join("")}
@@ -3162,19 +3276,19 @@ function renderMatchCard(match, index) {
     ? `<span style="color:#15803d;font-size:11px;font-weight:700;">✓ 符合预算</span>`
     : `<span style="color:#b45309;font-size:11px;font-weight:700;">超预算 ¥${pricing.overBudget}</span>`;
   return `
-    <article class="match-card card">
-      <div class="match-top">
-        <div class="score-circle"><span>AI评分</span>${match.total_score}</div>
+    <article class="${TW.matchCard} ${TW.card}">
+      <div class="${TW.matchTop}">
+        <div class="${TW.scoreCircle}"><span>AI评分</span>${match.total_score}</div>
         <div>
-          <h3>${match.user.nickname}${match.user.verified_status ? ' <span class="verified-badge">已验证</span>' : ""}</h3>
-          <p>${match.user.social_style} · ¥${match.user.budget_min}–${match.user.budget_max} · ${match.user.distance_km}km · <span class="rep-badge">信誉 ${rep.score}（${rep.tier}）</span></p>
-          <div class="tag-row">${match.user.interest_labels.slice(0, 4).map((tag) => `<span>${tag}</span>`).join("")}</div>
+          <h3>${match.user.nickname}${match.user.verified_status ? ' <span class="${TW.verifiedBadge}">已验证</span>' : ""}</h3>
+          <p>${match.user.social_style} · ¥${match.user.budget_min}–${match.user.budget_max} · ${match.user.distance_km}km · <span class="${TW.repBadge}">信誉 ${rep.score}（${rep.tier}）</span></p>
+          <div class="${TW.tagRow}">${match.user.interest_labels.slice(0, 4).map((tag) => `<span>${tag}</span>`).join("")}</div>
         </div>
       </div>
-      <div class="breakdown">
+      <div class="${TW.breakdown}">
         ${Object.entries(match.score_breakdown).slice(0, 6).map(([key, value]) => `<div><span>${breakdownLabel(key)}</span><b>${value}</b></div>`).join("")}
       </div>
-      <div class="place-mini">
+      <div class="${TW.placeMini}">
         <b>${match.poi.name}</b>
         <p style="margin-top:4px;">${match.poi.sub_category} · 等待 ${match.poi.wait_time_min} 分钟 · ${match.poi.distance_km}km · ${match.poi.rating}分</p>
         <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;">
@@ -3185,7 +3299,7 @@ function renderMatchCard(match, index) {
           ${pricing.saved > 0 ? `<span style="font-size:11px;color:#6b7280;">省 ¥${pricing.saved}</span>` : ""}
         </div>
       </div>
-      <details class="why-details" ${index === 0 ? "open" : ""}>
+      <details class="${TW.whyDetails}" ${index === 0 ? "open" : ""}>
         <summary>为什么是这家店 / 这个人 / 这个时间</summary>
         <ul>
           <li><b>地点</b>：${escapeHTML(match.poi.name)}，${escapeHTML(match.poi.sub_category)}，门店均价 ¥${match.poi.avg_price}，券后约 ¥${pricing.perPerson}/人，等待 ${match.poi.wait_time_min} 分钟${match.poi.hot_score > 80 ? "，当前热度高" : ""}</li>
@@ -3203,28 +3317,28 @@ function renderMatchCard(match, index) {
           </div>
         ` : ""}
       </details>
-      <div class="plan-copy">
+      <div class="${TW.planCopy}">
         <b>${escapeHTML(planTitle)}</b>
         <p>${escapeHTML(planCopy)}</p>
         ${director.risk ? `<p style="margin-top:6px;color:#6b7280;">风险预判：${escapeHTML(director.risk)}</p>` : ""}
         ${director.conversion_prompt ? `<p style="margin-top:6px;color:#92400e;">${escapeHTML(director.conversion_prompt)}</p>` : ""}
       </div>
-      <div class="adjust-row">
-        <button class="text-button" data-adjust="${index}" data-patch="cheaper">更便宜</button>
-        <button class="text-button" data-adjust="${index}" data-patch="closer">更近</button>
-        <button class="text-button" data-adjust="${index}" data-patch="quieter">更安静</button>
-        <button class="text-button" data-adjust="${index}" data-patch="change_time">换时间</button>
-        <button class="text-button" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
+      <div class="${TW.adjustRow}">
+        <button class="${TW.textButton}" data-adjust="${index}" data-patch="cheaper">更便宜</button>
+        <button class="${TW.textButton}" data-adjust="${index}" data-patch="closer">更近</button>
+        <button class="${TW.textButton}" data-adjust="${index}" data-patch="quieter">更安静</button>
+        <button class="${TW.textButton}" data-adjust="${index}" data-patch="change_time">换时间</button>
+        <button class="${TW.textButton}" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
       </div>
-      <div class="feedback-row">
+      <div class="${TW.feedbackRow}">
         <span style="font-size:11px;color:#9ca3af;align-self:center;">告诉 Agent：</span>
-        <button class="feedback-chip like" data-agent-feedback="like" data-feedback-plan="${index}">喜欢这个</button>
-        <button class="feedback-chip" data-agent-feedback="too_far" data-feedback-plan="${index}">太远了</button>
-        <button class="feedback-chip" data-agent-feedback="too_noisy" data-feedback-plan="${index}">太嘈杂</button>
-        <button class="feedback-chip" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
-        <button class="feedback-chip" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
+        <button class="${TW.feedbackChip} like" data-agent-feedback="like" data-feedback-plan="${index}">喜欢这个</button>
+        <button class="${TW.feedbackChip}" data-agent-feedback="too_far" data-feedback-plan="${index}">太远了</button>
+        <button class="${TW.feedbackChip}" data-agent-feedback="too_noisy" data-feedback-plan="${index}">太嘈杂</button>
+        <button class="${TW.feedbackChip}" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
+        <button class="${TW.feedbackChip}" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
       </div>
-      <button class="primary-button wide" data-invite-match="${index}" style="margin-top:4px;">发出邀约</button>
+      <button class="${TW.primaryButton} ${TW.wide}" data-invite-match="${index}" style="margin-top:4px;">发出邀约</button>
     </article>
   `;
 }
@@ -3243,10 +3357,10 @@ function showGroupInviteModal(match) {
     overlay.id = "groupInviteModal";
     overlay.className = "modal-overlay";
     overlay.innerHTML = `
-      <div class="modal-sheet" style="padding-bottom:32px;">
-        <div class="modal-header">
+      <div class="${TW.modalSheet}" style="padding-bottom:32px;">
+        <div class="${TW.modalHeader}">
           <h2 style="font-size:17px;">确认邀约</h2>
-          <button class="modal-close" id="closeInviteModal">关闭</button>
+          <button class="${TW.modalClose}" id="closeInviteModal">关闭</button>
         </div>
         <div style="padding:16px 18px 0;">
           <div style="background:#fff8e6;border:1.5px dashed #ffd100;border-radius:16px;padding:16px 18px;">
@@ -3269,9 +3383,9 @@ function showGroupInviteModal(match) {
           <p style="font-size:12px;color:#999;margin-top:10px;line-height:1.6;">
             对方收到的是一条<b>一键接受的约局邀请</b>，接受即进入活动页，不是自由聊天室。
           </p>
-          <div class="modal-actions" style="padding:14px 0 0;">
-            <button type="button" class="secondary-button" id="inviteChangeTime">换一个时间</button>
-            <button type="button" class="primary-button" id="inviteSend">发出邀约 →</button>
+          <div class="${TW.modalActions}" style="padding:14px 0 0;">
+            <button type="button" class="${TW.secondaryButton}" id="inviteChangeTime">换一个时间</button>
+            <button type="button" class="${TW.primaryButton}" id="inviteSend">发出邀约 →</button>
           </div>
         </div>
       </div>
@@ -3343,8 +3457,8 @@ function scenarioMessages(match) {
 function renderCoordinatorSummaryCard(match) {
   const pricing = computeDealPricing(match);
   return `
-    <section class="card result-fade" style="background:#fffdf0;border:2px dashed #FFE033;padding:14px 16px;margin-bottom:0;">
-      <p class="eyebrow" style="margin-bottom:8px;">AI 已帮你们对齐</p>
+    <section class="${TW.card} result-fade" style="background:#fffdf0;border:2px dashed #FFE033;padding:14px 16px;margin-bottom:0;">
+      <p class="${TW.eyebrow}" style="margin-bottom:8px;">AI 已帮你们对齐</p>
       <div style="display:grid;gap:6px;font-size:14px;">
         <div style="display:flex;justify-content:space-between;">
           <span style="color:#6b7280;">时间</span><b>${escapeHTML(match.suggested_time)}</b>
@@ -3376,31 +3490,31 @@ function renderChatPage() {
     const gc = appState.groupChats.find((g) => g.group_id === appState.viewingGroupChatId);
     if (!gc) { backToList(); return; }
     $("#chatPage").innerHTML = `
-      <section class="card gc-header-card">
-        <button type="button" class="back-text-btn" id="backToList">← 消息</button>
-        <div class="gc-header-info">
-          <div class="gc-avatar">${poiBadgeHTML(gc.poi)}</div>
+      <section class="${TW.card} ${TW.gcHeaderCard}">
+        <button type="button" class="${TW.backTextBtn}" id="backToList">← 消息</button>
+        <div class="${TW.gcHeaderInfo}">
+          <div class="${TW.gcAvatar}">${poiBadgeHTML(gc.poi)}</div>
           <div>
             <h2 style="font-size:16px;">${gc.name}</h2>
-            <p class="muted">${gc.members.map((m) => m.nickname).join(" · ")}</p>
+            <p class="${TW.muted}">${gc.members.map((m) => m.nickname).join(" · ")}</p>
           </div>
         </div>
       </section>
-      <section class="card" style="padding:10px 14px;margin-bottom:8px;">
-        <p class="eyebrow" style="margin-bottom:4px;">约定详情</p>
+      <section class="${TW.card}" style="padding:10px 14px;margin-bottom:8px;">
+        <p class="${TW.eyebrow}" style="margin-bottom:4px;">约定详情</p>
         <p><b>${gc.poi.name}</b> · ${gc.suggested_time} · 人均 ¥${gc.poi.avg_price}</p>
       </section>
-      <section class="messages-card card">
+      <section class="${TW.messagesCard} ${TW.card}">
         ${gc.messages.map((m) => {
-          if (m.sender === "system") return `<div class="message system-msg"><span>${m.text}</span></div>`;
+          if (m.sender === "system") return `<div class="${TW.message} ${TW.systemMsg}"><span>${m.text}</span></div>`;
           return renderMessage(m);
         }).join("")}
-        <div class="quick-replies">
+        <div class="${TW.quickReplies}">
           ${["收到！", "我在路上", "稍等一下", "已到门口"].map((t) => `<button data-gcquick="${t}">${t}</button>`).join("")}
         </div>
-        <div class="chat-composer">
+        <div class="${TW.chatComposer}">
           <input id="gcInput" placeholder="输入群消息" />
-          <button class="primary-button" id="gcSend">发送</button>
+          <button class="${TW.primaryButton}" id="gcSend">发送</button>
         </div>
       </section>
     `;
@@ -3436,79 +3550,79 @@ function renderChatPage() {
     const deal = getDeal(match.poi.poi_id);
     const planMeta = currentPlanStatusMeta();
     $("#chatPage").innerHTML = `
-      <section class="card gc-header-card">
-        <button type="button" class="back-text-btn" id="backFromActive">← 消息</button>
-        <div class="gc-header-info">
-          <div class="gc-avatar" style="font-size:22px;font-weight:700;">${match.user.nickname[0]}</div>
+      <section class="${TW.card} ${TW.gcHeaderCard}">
+        <button type="button" class="${TW.backTextBtn}" id="backFromActive">← 消息</button>
+        <div class="${TW.gcHeaderInfo}">
+          <div class="${TW.gcAvatar}" style="font-size:22px;font-weight:700;">${match.user.nickname[0]}</div>
           <div style="flex:1;min-width:0;">
-            <h2 style="font-size:16px;">${match.user.nickname}${match.user.verified_status ? ' <span class="verified-badge">已验证</span>' : ""}</h2>
-            <p class="muted" style="font-size:12px;">${match.total_score}% 匹配 · ${match.user.social_style} · ${match.user.distance_km}km</p>
+            <h2 style="font-size:16px;">${match.user.nickname}${match.user.verified_status ? ' <span class="${TW.verifiedBadge}">已验证</span>' : ""}</h2>
+            <p class="${TW.muted}" style="font-size:12px;">${match.total_score}% 匹配 · ${match.user.social_style} · ${match.user.distance_km}km</p>
           </div>
-          <span class="active-match-badge">进行中</span>
+          <span class="${TW.activeMatchBadge}">进行中</span>
         </div>
       </section>
-      <section class="intent-summary-card card">
-        <p class="eyebrow" style="margin-bottom:6px;">此次出行</p>
-        <div class="intent-tags">
-          <span class="intent-tag">${match.intent.activity_type}</span>
-          <span class="intent-tag">¥${match.intent.budget_min}–${match.intent.budget_max}</span>
-          <span class="intent-tag">${match.intent.social_style}</span>
-          <span class="intent-tag">${match.intent.group_size}</span>
-          <span class="intent-tag">${match.intent.target_time}</span>
+      <section class="${TW.intentSummaryCard} ${TW.card}">
+        <p class="${TW.eyebrow}" style="margin-bottom:6px;">此次出行</p>
+        <div class="${TW.intentTags}">
+          <span class="${TW.intentTag}">${match.intent.activity_type}</span>
+          <span class="${TW.intentTag}">¥${match.intent.budget_min}–${match.intent.budget_max}</span>
+          <span class="${TW.intentTag}">${match.intent.social_style}</span>
+          <span class="${TW.intentTag}">${match.intent.group_size}</span>
+          <span class="${TW.intentTag}">${match.intent.target_time}</span>
         </div>
-        <button class="safety-button" id="safetyOptions">安全选项</button>
+        <button class="${TW.safetyButton}" id="safetyOptions">安全选项</button>
       </section>
-      ${appState.replanningNotice ? `<div class="notice-card">${appState.replanningNotice}</div>` : ""}
-      <section class="card" style="padding:10px 14px;">
-        <p class="eyebrow" style="margin-bottom:6px;">当前局态</p>
+      ${appState.replanningNotice ? `<div class="${TW.noticeCard}">${appState.replanningNotice}</div>` : ""}
+      <section class="${TW.card}" style="padding:10px 14px;">
+        <p class="${TW.eyebrow}" style="margin-bottom:6px;">当前局态</p>
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;">
           <b>${planMeta.label}</b>
           <span style="color:#6b7280;">${planMeta.progress}%</span>
         </div>
-        <div class="progress-track" style="margin-top:8px;">
-          <div class="progress-fill" style="width:${planMeta.progress}%;"></div>
+        <div class="${TW.progressTrack}" style="margin-top:8px;">
+          <div class="${TW.progressFill}" style="width:${planMeta.progress}%;"></div>
         </div>
       </section>
       ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? renderCoordinatorSummaryCard(match) : ""}
-      <section class="plan-card card">
-        <p class="eyebrow">方案确认</p>
+      <section class="${TW.planCard} ${TW.card}">
+        <p class="${TW.eyebrow}">方案确认</p>
         <h2>${match.poi.name}</h2>
         <p>${match.suggested_time} · ${match.intent.group_size} · 预算 ¥${match.intent.budget_min}–${match.intent.budget_max}</p>
-        <p class="muted">${match.poi.sub_category} · 人均 ¥${match.poi.avg_price} · 等待 ${match.poi.wait_time_min} 分钟 · 备选 ${match.backup_poi ? match.backup_poi.name : "同类附近地点"}</p>
-        <div class="deal-strip">${deal.title}</div>
-        <p class="wait-status">${planMeta.label}</p>
-        <div class="confirm-row">
+        <p class="${TW.muted}">${match.poi.sub_category} · 人均 ¥${match.poi.avg_price} · 等待 ${match.poi.wait_time_min} 分钟 · 备选 ${match.backup_poi ? match.backup_poi.name : "同类附近地点"}</p>
+        <div class="${TW.dealStrip}">${deal.title}</div>
+        <p class="${TW.waitStatus}">${planMeta.label}</p>
+        <div class="${TW.confirmRow}">
           <span class="${appState.currentUserConfirmed ? "ok" : ""}">我 ${appState.currentUserConfirmed ? "已确认" : "待确认"}</span>
           <span class="${appState.matchedUserConfirmed ? "ok" : ""}">对方 ${appState.matchedUserConfirmed ? "已确认" : "待确认"}</span>
         </div>
-        <div class="action-grid">
+        <div class="${TW.actionGrid}">
           ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? `
-            <button class="primary-button" id="simPeerConfirm">✓ 模拟对方确认</button>
-            <button class="secondary-button" id="simPeerReject">✗ 模拟对方拒绝</button>
-            <button class="secondary-button" id="simTimeout">⏱ 模拟等待超时</button>
+            <button class="${TW.primaryButton}" id="simPeerConfirm">✓ 模拟对方确认</button>
+            <button class="${TW.secondaryButton}" id="simPeerReject">✗ 模拟对方拒绝</button>
+            <button class="${TW.secondaryButton}" id="simTimeout">⏱ 模拟等待超时</button>
           ` : appState.planStatus === PLAN_STATUS.CONFIRMED ? `
-            <button class="primary-button wide" id="goToSuccess">查看成局详情 →</button>
+            <button class="${TW.primaryButton} ${TW.wide}" id="goToSuccess">查看成局详情 →</button>
           ` : `
-            <button class="primary-button" id="confirmMatch" ${appState.currentUserConfirmed ? "disabled" : ""}>我确认</button>
-            <button class="secondary-button" id="changePlace">换地点</button>
-            <button class="secondary-button" id="simulateWait">模拟排队变长</button>
-            <button class="secondary-button" id="simulateReject">模拟对方拒绝</button>
+            <button class="${TW.primaryButton}" id="confirmMatch" ${appState.currentUserConfirmed ? "disabled" : ""}>我确认</button>
+            <button class="${TW.secondaryButton}" id="changePlace">换地点</button>
+            <button class="${TW.secondaryButton}" id="simulateWait">模拟排队变长</button>
+            <button class="${TW.secondaryButton}" id="simulateReject">模拟对方拒绝</button>
           `}
         </div>
         ${appState.fallbackSuggestion ? `<p style="margin-top:8px;color:#92400e;background:#fffbeb;border-radius:10px;padding:8px 10px;">${appState.fallbackSuggestion}</p>` : ""}
         ${renderRejectRematchCard()}
-        ${appState.planStatus === PLAN_STATUS.FALLBACK_READY ? `<button class="primary-button wide" id="acceptFallback" style="margin-top:8px;">接受候补方案</button>` : ""}
+        ${appState.planStatus === PLAN_STATUS.FALLBACK_READY ? `<button class="${TW.primaryButton} ${TW.wide}" id="acceptFallback" style="margin-top:8px;">接受候补方案</button>` : ""}
         ${appState.debugMeta ? `<details style="margin-top:8px;"><summary style="cursor:pointer;color:#6b7280;">调试字段（并发叙事）</summary><p style="margin-top:6px;font-size:12px;color:#6b7280;">match_version: ${appState.debugMeta.match_version}<br/>reservation_ttl: ${appState.debugMeta.reservation_ttl}<br/>idempotency_key: ${appState.debugMeta.idempotency_key}</p></details>` : ""}
       </section>
-      <section class="messages-card card">
+      <section class="${TW.messagesCard} ${TW.card}">
         ${appState.chatThread.messages.map(renderMessage).join("")}
-        ${appState.pendingSuccess ? `<div class="confirming-banner">双方已确认，正在生成成局卡片...</div>` : ""}
-        <div class="quick-replies">
+        ${appState.pendingSuccess ? `<div class="${TW.confirmingBanner}">双方已确认，正在生成成局卡片...</div>` : ""}
+        <div class="${TW.quickReplies}">
           ${["可以", "想换一家", "时间短一点", "时间晚一点", "预算有点高", "直接确认"].map((text) => `<button data-quick="${text}">${text}</button>`).join("")}
         </div>
-        <div class="chat-composer">
+        <div class="${TW.chatComposer}">
           <input id="chatInput" placeholder="输入消息" />
-          <button class="primary-button" id="sendMessage">发送</button>
+          <button class="${TW.primaryButton}" id="sendMessage">发送</button>
         </div>
       </section>
     `;
@@ -3550,41 +3664,41 @@ function renderChatPage() {
 
   if (!activeMatch && allChats.length === 0) {
     $("#chatPage").innerHTML = `
-      <header class="chat-page-header"><h1>消息</h1></header>
-      <section class="card empty-state">
+      <header class="${TW.chatPageHeader}"><h1>消息</h1></header>
+      <section class="${TW.card} ${TW.emptyState}">
         <h2>还没有消息</h2>
         <p>从地图加入一个局，或让 AI 帮你匹配。</p>
-        <button class="primary-button wide" id="goAI">去 AI 匹配</button>
+        <button class="${TW.primaryButton} ${TW.wide}" id="goAI">去 AI 匹配</button>
       </section>`;
     $("#goAI").addEventListener("click", () => setPage("ai"));
     return;
   }
 
   $("#chatPage").innerHTML = `
-    <header class="chat-page-header"><h1>消息</h1></header>
+    <header class="${TW.chatPageHeader}"><h1>消息</h1></header>
     ${activeMatch ? `
-      <article class="group-list-item card active-chat-item" id="openActiveMatch">
-        <div class="gc-list-icon active-chat-icon">${activeMatch.user.nickname[0]}</div>
-        <div class="gc-list-body">
+      <article class="${TW.groupListItem} ${TW.card} ${TW.activeChatItem}" id="openActiveMatch">
+        <div class="${TW.gcListIcon} ${TW.activeChatIcon}">${activeMatch.user.nickname[0]}</div>
+        <div class="${TW.gcListBody}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
             <h3 style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${activeMatch.user.nickname} · ${activeMatch.poi.name}</h3>
-            <span class="active-match-badge">进行中</span>
+            <span class="${TW.activeMatchBadge}">进行中</span>
           </div>
           <p>${activeMatch.suggested_time} · ${activeMatch.intent.activity_type}</p>
-          <small class="muted">${lastMsg(appState.chatThread?.messages || [])}</small>
+          <small class="${TW.muted}">${lastMsg(appState.chatThread?.messages || [])}</small>
         </div>
       </article>
     ` : ""}
     ${allChats.map((gc) => `
-      <article class="group-list-item card" data-gcid="${gc.group_id}">
-        <div class="gc-list-icon">${poiBadgeHTML(gc.poi)}</div>
-        <div class="gc-list-body">
+      <article class="${TW.groupListItem} ${TW.card}" data-gcid="${gc.group_id}">
+        <div class="${TW.gcListIcon}">${poiBadgeHTML(gc.poi)}</div>
+        <div class="${TW.gcListBody}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
             <h3 style="flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">${gc.name}</h3>
-            <span class="gc-list-time">${gc.createdAt}</span>
+            <span class="${TW.gcListTime}">${gc.createdAt}</span>
           </div>
           <p>${gc.suggested_time} · ${gc.members.map((m) => m.nickname).join("、")}</p>
-          <small class="muted">${lastMsg(gc.messages)}</small>
+          <small class="${TW.muted}">${lastMsg(gc.messages)}</small>
         </div>
       </article>
     `).join("")}
@@ -3688,50 +3802,50 @@ function openReplanChooser(eventType, match = appState.selectedMatch, options = 
   overlay.id = "replanChoiceModal";
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal-sheet">
-      <div class="modal-header">
+    <div class="${TW.modalSheet}">
+      <div class="${TW.modalHeader}">
         <div>
-          <p class="eyebrow">${copy.modeLabel}</p>
+          <p class="${TW.eyebrow}">${copy.modeLabel}</p>
           <h2>${copy.title}</h2>
         </div>
-        <button class="modal-close" id="closeReplanModal" aria-label="关闭">关闭</button>
+        <button class="${TW.modalClose}" id="closeReplanModal" aria-label="关闭">关闭</button>
       </div>
-      <div class="replan-body">
-        <div class="replan-context">
+      <div class="${TW.replanBody}">
+        <div class="${TW.replanContext}">
           <b>当前方案：${match.poi.name}</b>
           <p>${copy.brief}</p>
-          <p class="score-formula">综合分 = 品类相似 26% + 等待友好 22% + 人均相近 17% + 距离 13% + 评分 10% + 对方偏好 12%</p>
-          <div class="candidate-metrics">
+          <p class="${TW.scoreFormula}">综合分 = 品类相似 26% + 等待友好 22% + 人均相近 17% + 距离 13% + 评分 10% + 对方偏好 12%</p>
+          <div class="${TW.candidateMetrics}">
             <span>当前等待 ${match.poi.wait_time_min}min</span>
             <span>人均 ¥${match.poi.avg_price}</span>
             <span>${match.intent.social_style}</span>
           </div>
         </div>
-        <div class="replan-candidate-list">
+        <div class="${TW.replanCandidateList}">
           ${candidates.map((item, index) => `
-            <article class="replan-candidate">
-              <div class="candidate-head">
-                <span class="rank-badge">#${index + 1}</span>
+            <article class="${TW.replanCandidate}">
+              <div class="${TW.candidateHead}">
+                <span class="${TW.rankBadge}">#${index + 1}</span>
                 <div>
 	                  <b>${item.poi.name}</b>
 	                  <p>${item.poi.sub_category} · ${item.poi.distance_km}km · ${item.poi.rating}分</p>
 	                </div>
 	                <strong><span>综合</span>${item.rankScore}<small>分</small></strong>
 	              </div>
-	              <div class="candidate-metrics">
+	              <div class="${TW.candidateMetrics}">
 	                <span>品类相似 ${item.categoryScore}</span>
 	                <span>等待友好 ${item.waitScore}</span>
 	                <span>人均相近 ${item.priceScore}</span>
 	                <span>对方偏好 ${item.peerScore}</span>
 	              </div>
-              <p class="candidate-reason">${item.reasons.join(" · ")}</p>
-              <button class="primary-button wide" data-choose-replan="${index}">选择并发给对方确认</button>
+              <p class="${TW.candidateReason}">${item.reasons.join(" · ")}</p>
+              <button class="${TW.primaryButton} ${TW.wide}" data-choose-replan="${index}">选择并发给对方确认</button>
             </article>
-          `).join("") || `<p class="empty">当前没有足够接近的候选店，可以继续保留原方案。</p>`}
+          `).join("") || `<p class="${TW.empty}">当前没有足够接近的候选店，可以继续保留原方案。</p>`}
         </div>
         ${eventType === "waiting_time_change" ? `
-          <div class="wait-choice-row">
-            <button class="secondary-button wide" id="keepWaitingBtn">继续等原店</button>
+          <div class="${TW.waitChoiceRow}">
+            <button class="${TW.secondaryButton} ${TW.wide}" id="keepWaitingBtn">继续等原店</button>
           </div>
         ` : ""}
       </div>
@@ -3859,7 +3973,7 @@ function buildGroupChat(match) {
 function renderMessage(message) {
   const cls = message.sender === "user_current" ? "me" : message.sender === "ai" ? "ai" : "other";
   const meta = message.ai_generated ? "AI 模拟对方" : message.timestamp;
-  return `<div class="message ${cls} ${message.pending ? "is-pending" : ""}"><span>${escapeHTML(message.text)}</span><small>${escapeHTML(meta || "")}</small></div>`;
+  return `<div class="${TW.message} ${cls} ${message.pending ? "is-pending" : ""}"><span>${escapeHTML(message.text)}</span><small>${escapeHTML(meta || "")}</small></div>`;
 }
 
 function confirmMatch() {
@@ -3915,23 +4029,23 @@ function showSafetyPanel() {
   }
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal-sheet" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
+    <div class="${TW.modalSheet}" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
       <h3 style="margin:4px 0 12px;">安全选项</h3>
       <div style="display:flex;flex-direction:column;gap:10px;">
-        <button class="secondary-button" id="safetyShare" style="text-align:left;padding:12px 14px;">
+        <button class="${TW.secondaryButton}" id="safetyShare" style="text-align:left;padding:12px 14px;">
           <b>📍 开启行程共享</b><br/>
           <span style="font-size:12px;color:#6b7280;">将本次出行位置实时分享给紧急联系人</span>
         </button>
-        <button class="secondary-button" id="safetyContact" style="text-align:left;padding:12px 14px;">
+        <button class="${TW.secondaryButton}" id="safetyContact" style="text-align:left;padding:12px 14px;">
           <b>📞 通知紧急联系人</b><br/>
           <span style="font-size:12px;color:#6b7280;">发送一键提醒消息，告知今晚行程安排</span>
         </button>
-        <button class="secondary-button" id="safetyReport" style="text-align:left;padding:12px 14px;">
+        <button class="${TW.secondaryButton}" id="safetyReport" style="text-align:left;padding:12px 14px;">
           <b>🚨 举报 / 求助</b><br/>
           <span style="font-size:12px;color:#6b7280;">遇到异常情况可一键联系美团安全团队</span>
         </button>
       </div>
-      <button class="secondary-button" id="closeSafetyPanel" style="margin-top:14px;width:100%;">关闭</button>
+      <button class="${TW.secondaryButton}" id="closeSafetyPanel" style="margin-top:14px;width:100%;">关闭</button>
     </div>
   `;
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
@@ -3950,10 +4064,10 @@ function renderRejectRematchCard() {
   if (!r || appState.planStatus !== PLAN_STATUS.FALLBACK_READY) return "";
   const bd = r.next?.score_breakdown || {};
   return `
-    <section class="card" style="margin-top:8px;background:#f8fafc;">
-      <p class="eyebrow">拒人重算（B → 候补）</p>
+    <section class="${TW.card}" style="margin-top:8px;background:#f8fafc;">
+      <p class="${TW.eyebrow}">拒人重算（B → 候补）</p>
       <p style="margin:6px 0;font-size:13px;">排除 <b>${escapeHTML(r.prevNickname)}</b>（${r.prevScore}%）→ 推荐 <b>${escapeHTML(r.next.user.nickname)}</b> @ ${escapeHTML(r.next.poi.name)}（${r.next.total_score}%）</p>
-      <div class="breakdown" style="margin-top:8px;">
+      <div class="${TW.breakdown}" style="margin-top:8px;">
         ${Object.entries(bd).slice(0, 6).map(([key, value]) => `<div><span>${breakdownLabel(key)}</span><b>${value}</b></div>`).join("")}
       </div>
     </section>
@@ -4146,10 +4260,10 @@ function renderSuccessPage() {
     ? `双方已选择：${appState.selectedDeal.title}`
     : `待选择，AI 当前推荐：${dealRank ? dealRank.deal.title : deal.title}`;
   $("#successPage").innerHTML = `
-    <section class="success-card card">
-      <div class="success-mark">✓</div>
+    <section class="${TW.successCard} ${TW.card}">
+      <div class="${TW.successMark}">✓</div>
       <h1>成局成功</h1>
-      <div class="final-plan-card">
+      <div class="${TW.finalPlanCard}">
         <p><b>搭子昵称</b><span>${appState.selectedMatch.user.nickname}</span></p>
         <p><b>地点名称</b><span>${appState.selectedMatch.poi.name}</span></p>
         <p><b>时间</b><span>${appState.selectedMatch.suggested_time}</span></p>
@@ -4160,9 +4274,9 @@ function renderSuccessPage() {
       <p style="margin-top:8px;font-size:13px;color:${appState.depositLocked ? "#15803d" : "#6b7280"};">
         诚意金状态：${appState.depositLocked ? "已锁定（满足成局前置条件）" : "已解锁（发生改约/拒绝后释放）"}
       </p>
-      <div class="fulfillment-timeline card" style="margin-top:10px;padding:12px;">
-        <p class="eyebrow" style="margin-bottom:8px;">成局履约时间线</p>
-        <ol class="timeline-list">
+      <div class="fulfillment-timeline ${TW.card}" style="margin-top:10px;padding:12px;">
+        <p class="${TW.eyebrow}" style="margin-bottom:8px;">成局履约时间线</p>
+        <ol class="${TW.timelineList}">
           <li class="${appState.depositLocked ? "done" : ""}">锁定诚意金 / 支付意愿</li>
           <li class="done">双方确认方案</li>
           <li>选择并购买团购券</li>
@@ -4170,20 +4284,20 @@ function renderSuccessPage() {
           <li>解冻诚意金 · 信誉 +2</li>
         </ol>
       </div>
-      <div class="deal-box">
+      <div class="${TW.dealBox}">
         <b>${selectedDealText}</b>
         <p>${deal.deal_type} · 原价 ¥${deal.original_price} · 优惠价 ¥${deal.discount_price} · 省 ¥${Math.max(0, deal.original_price - deal.discount_price)}</p>
         <p>适合 ${deal.suitable_group_size} · ${deal.valid_time}</p>
       </div>
-      <button class="primary-button wide" id="enterGroupChat">进入群聊</button>
-      <button class="primary-button wide" id="chooseDeal">AI 排序选择团购券</button>
-      <button class="primary-button wide" id="buyDeal">${appState.selectedDeal ? "购买已选团购券" : "先选择团购券"}</button>
-      <div class="success-secondary-row">
-        <button class="secondary-button" id="viewRoute">导航出发</button>
-        <button class="secondary-button" id="addCalendar">加入日历</button>
-        <button class="secondary-button" id="shareBuddy">分享</button>
+      <button class="${TW.primaryButton} ${TW.wide}" id="enterGroupChat">进入群聊</button>
+      <button class="${TW.primaryButton} ${TW.wide}" id="chooseDeal">AI 排序选择团购券</button>
+      <button class="${TW.primaryButton} ${TW.wide}" id="buyDeal">${appState.selectedDeal ? "购买已选团购券" : "先选择团购券"}</button>
+      <div class="${TW.successSecondaryRow}">
+        <button class="${TW.secondaryButton}" id="viewRoute">导航出发</button>
+        <button class="${TW.secondaryButton}" id="addCalendar">加入日历</button>
+        <button class="${TW.secondaryButton}" id="shareBuddy">分享</button>
       </div>
-      <p class="platform-value">从搭子匹配到到店转化，完成 Local Life Coordination 闭环。</p>
+      <p class="${TW.platformValue}">从搭子匹配到到店转化，完成 Local Life Coordination 闭环。</p>
     </section>
   `;
   const lastGC = appState.groupChats[appState.groupChats.length - 1];
@@ -4214,29 +4328,29 @@ function renderProfilePage() {
   const rep = me.reputation_score != null ? me.reputation_score : reputationBadge(me).score;
   const tier = rep >= 85 ? "靠谱搭子" : rep >= 70 ? "良好" : "一般";
   $("#profilePage").innerHTML = `
-    <section class="card profile-hero-card">
-      <div class="profile-hero-row">
-        <div class="profile-avatar-lg">${me.avatar_url ? `<img src="${me.avatar_url}" alt="" />` : me.nickname[0]}</div>
+    <section class="${TW.card} ${TW.profileHeroCard}">
+      <div class="${TW.profileHeroRow}">
+        <div class="${TW.profileAvatarLg}">${me.avatar_url ? `<img src="${me.avatar_url}" alt="" />` : me.nickname[0]}</div>
         <div>
           <h2>${me.nickname}</h2>
-          <p class="muted">美团已验证 · ${area}</p>
-          <p style="margin-top:6px;"><span class="rep-badge rep-lg">信誉 ${rep} · ${tier}</span></p>
+          <p class="${TW.muted}">美团已验证 · ${area}</p>
+          <p style="margin-top:6px;"><span class="${TW.repBadge} ${TW.repLg}">信誉 ${rep} · ${tier}</span></p>
         </div>
       </div>
-      <div class="profile-stats-row">
+      <div class="${TW.profileStatsRow}">
         <div><b>${me.completed_plans || 0}</b><span>完成成局</span></div>
         <div><b>${Math.round((1 - (me.no_show_rate || 0.05)) * 100)}%</b><span>准时率</span></div>
         <div><b>${me.peer_rating || 4.8}</b><span>搭子评价</span></div>
       </div>
-      <div class="tag-row" style="margin-top:10px;">${(me.interest_labels || []).map((t) => `<span>${t}</span>`).join("")}</div>
+      <div class="${TW.tagRow}" style="margin-top:10px;">${(me.interest_labels || []).map((t) => `<span>${t}</span>`).join("")}</div>
     </section>
-    <section class="card">
-      <p class="eyebrow">信誉分说明</p>
-      <p class="muted" style="margin-top:6px;">综合完成率 40% + 准时 35% + 搭子评价 25%，匹配权重约占 5%。</p>
+    <section class="${TW.card}">
+      <p class="${TW.eyebrow}">信誉分说明</p>
+      <p class="${TW.muted}" style="margin-top:6px;">综合完成率 40% + 准时 35% + 搭子评价 25%，匹配权重约占 5%。</p>
     </section>
-    <details class="card">
+    <details class="${TW.card}">
       <summary style="cursor:pointer;font-weight:600;">开发者：数据健康度</summary>
-      <div class="health-list" style="margin-top:10px;">
+      <div class="${TW.healthList}" style="margin-top:10px;">
         <div><span>POI</span><b>${pois.length}</b></div>
         <div><span>核心用户</span><b>${users.length}</b></div>
         <div><span>搭子需求</span><b>${buddyDemands.length}</b></div>
@@ -4381,39 +4495,39 @@ function openDealRankChooser() {
   overlay.id = "dealRankModal";
   overlay.className = "modal-overlay";
   overlay.innerHTML = `
-    <div class="modal-sheet">
-      <div class="modal-header">
+    <div class="${TW.modalSheet}">
+      <div class="${TW.modalHeader}">
         <div>
-          <p class="eyebrow">团购券 AI Rank</p>
+          <p class="${TW.eyebrow}">团购券 AI Rank</p>
           <h2>锁定后选择团购券</h2>
         </div>
-        <button class="modal-close" id="closeDealRankModal" aria-label="关闭">关闭</button>
+        <button class="${TW.modalClose}" id="closeDealRankModal" aria-label="关闭">关闭</button>
       </div>
-      <div class="replan-body">
-        <div class="replan-context">
+      <div class="${TW.replanBody}">
+        <div class="${TW.replanContext}">
           <b>${appState.selectedMatch.poi.name} · ${appState.selectedMatch.intent.group_size}</b>
           <p>成局锁定后，AI 按双方人数、预算、节省金额、有效期和对方券偏好排序，先让双方选券，再进入购买。</p>
-          <p class="score-formula">综合分 = 人数适配 25% + 节省力度 25% + 人均预算 20% + 有效时间 12% + 对方偏好 10% + 地点匹配 8%</p>
+          <p class="${TW.scoreFormula}">综合分 = 人数适配 25% + 节省力度 25% + 人均预算 20% + 有效时间 12% + 对方偏好 10% + 地点匹配 8%</p>
         </div>
-        <div class="replan-candidate-list">
+        <div class="${TW.replanCandidateList}">
           ${ranked.map((item, index) => `
-            <article class="replan-candidate deal-rank-card ${appState.selectedDeal && appState.selectedDeal.deal_id === item.deal.deal_id ? "is-selected" : ""}">
-              <div class="candidate-head">
-                <span class="rank-badge">#${index + 1}</span>
+            <article class="${TW.replanCandidate} ${TW.dealRankCard} ${appState.selectedDeal && appState.selectedDeal.deal_id === item.deal.deal_id ? "is-selected" : ""}">
+              <div class="${TW.candidateHead}">
+                <span class="${TW.rankBadge}">#${index + 1}</span>
                 <div>
                   <b>${item.deal.title}</b>
                   <p>${item.deal.deal_type} · ${item.deal.valid_time} · ${item.deal.suitable_group_size}</p>
                 </div>
                 <strong><span>综合</span>${item.rankScore}<small>分</small></strong>
               </div>
-              <div class="candidate-metrics">
+              <div class="${TW.candidateMetrics}">
                 <span>人数 ${item.groupScore}</span>
                 <span>节省 ${item.saveScore}</span>
                 <span>预算 ${item.budgetScore}</span>
                 <span>偏好 ${item.preferenceScore}</span>
               </div>
-              <p class="candidate-reason">原价 ¥${item.deal.original_price} · 券后 ¥${item.deal.discount_price} · 省 ¥${item.saved} · ${item.reasons.join(" · ")}</p>
-              <button class="primary-button wide" data-choose-deal="${index}">${appState.selectedDeal && appState.selectedDeal.deal_id === item.deal.deal_id ? "已选这张券" : "选择并发给对方确认"}</button>
+              <p class="${TW.candidateReason}">原价 ¥${item.deal.original_price} · 券后 ¥${item.deal.discount_price} · 省 ¥${item.saved} · ${item.reasons.join(" · ")}</p>
+              <button class="${TW.primaryButton} ${TW.wide}" data-choose-deal="${index}">${appState.selectedDeal && appState.selectedDeal.deal_id === item.deal.deal_id ? "已选这张券" : "选择并发给对方确认"}</button>
             </article>
           `).join("")}
         </div>
@@ -4497,7 +4611,7 @@ function renderDepositSheet() {
   const poi = appState.selectedMatch?.poi;
   const depositAmt = 9.9;
   sheet.innerHTML = `
-    <div class="modal-sheet" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
+    <div class="${TW.modalSheet}" style="border-radius:18px 18px 0 0;align-self:flex-end;max-width:460px;">
       <h3 style="margin:4px 0 4px;">支付意愿锁定</h3>
       <p style="font-size:12px;color:#9ca3af;margin-bottom:12px;">本次成局的诚意担保（演示）</p>
       <div style="background:#f8fafc;border-radius:12px;padding:12px 14px;margin-bottom:12px;">
@@ -4523,8 +4637,8 @@ function renderDepositSheet() {
         我已阅读并同意冻结 ¥${depositAmt.toFixed(1)} 诚意金，用于锁定本次成局意愿
       </label>
       <div style="display:flex;gap:8px;">
-        <button class="secondary-button" id="cancelDepositSheet" style="flex:1;">再想想</button>
-        <button class="primary-button" id="confirmDepositSheet" style="flex:1;" ${appState.depositAgreementChecked ? "" : "disabled"}>锁定并继续</button>
+        <button class="${TW.secondaryButton}" id="cancelDepositSheet" style="flex:1;">再想想</button>
+        <button class="${TW.primaryButton}" id="confirmDepositSheet" style="flex:1;" ${appState.depositAgreementChecked ? "" : "disabled"}>锁定并继续</button>
       </div>
     </div>
   `;
@@ -4562,7 +4676,7 @@ function renderToast() {
     document.body.appendChild(toast);
   }
   toast.textContent = appState.toast;
-  toast.className = appState.toast ? "toast is-show" : "toast";
+  toast.className = appState.toast ? `${TW.toast} ${TW.toastShow}` : TW.toast;
 }
 
 function sleep(ms) {
