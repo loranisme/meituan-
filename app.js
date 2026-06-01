@@ -101,6 +101,9 @@ const appState = {
   circlePageOpen: false,
   browseRadiusKm: 2,
   circleTimeSlot: "now",
+  mapLayer: "heat",
+  mapExpandedClusterId: null,
+  mapManualPOI: false,
   agentMemory: null,
   agentMemoryNotice: "",
   agentFeedbackLog: []
@@ -275,6 +278,8 @@ function applyBrowseRadius(km) {
   const next = Number(km);
   if (!Number.isFinite(next) || next <= 0) return;
   appState.browseRadiusKm = next;
+  appState.mapExpandedClusterId = null;
+  appState.mapManualPOI = false;
   refreshMapSupply();
   syncMapRangeOverlay();
   updateAreaPill();
@@ -282,6 +287,8 @@ function applyBrowseRadius(km) {
 
 function selectLifeCircle(circleId) {
   appState.selectedCircleId = circleId;
+  appState.mapExpandedClusterId = null;
+  appState.mapManualPOI = false;
   const circle = getCurrentCircle();
   applyBrowseRadius(circle.radius_km || 2);
   // 不关闭圈子浮层，不跳页：就地刷新浮层内容
@@ -526,6 +533,20 @@ function flatMapZonesHTML(classPrefix = "", options = {}) {
     <div class="${p}map-zone zone-sport" aria-hidden="true"></div>
     <div class="${p}map-zone zone-night" aria-hidden="true"></div>
     <div class="${p}map-grid" aria-hidden="true"></div>
+    <div class="${p}map-landuse map-park park-west" aria-hidden="true"></div>
+    <div class="${p}map-landuse map-park park-east" aria-hidden="true"></div>
+    <div class="${p}map-landuse map-campus campus-north" aria-hidden="true"></div>
+    <div class="${p}map-landuse map-water water-south" aria-hidden="true"></div>
+    <div class="${p}map-street street-h street-h-1" aria-hidden="true"></div>
+    <div class="${p}map-street street-h street-h-2" aria-hidden="true"></div>
+    <div class="${p}map-street street-h street-h-3" aria-hidden="true"></div>
+    <div class="${p}map-street street-h street-h-4" aria-hidden="true"></div>
+    <div class="${p}map-street street-v street-v-1" aria-hidden="true"></div>
+    <div class="${p}map-street street-v street-v-2" aria-hidden="true"></div>
+    <div class="${p}map-street street-v street-v-3" aria-hidden="true"></div>
+    <div class="${p}map-street street-v street-v-4" aria-hidden="true"></div>
+    <div class="${p}map-street street-diag street-diag-1" aria-hidden="true"></div>
+    <div class="${p}map-street street-diag street-diag-2" aria-hidden="true"></div>
     <div class="${p}map-road road-main" aria-hidden="true"></div>
     <div class="${p}map-road road-cross" aria-hidden="true"></div>
     <div class="${p}map-road road-upper" aria-hidden="true"></div>
@@ -537,10 +558,16 @@ function flatMapZonesHTML(classPrefix = "", options = {}) {
     <span class="${p}map-place-label label-westwood">主街</span>
     <span class="${p}map-place-label label-campus">校园侧</span>
     <span class="${p}map-place-label label-riverside">河岸路</span>
-    <span class="${p}map-zone-label zone-label-dining" aria-hidden="true">🍜 餐饮区</span>
-    <span class="${p}map-zone-label zone-label-play" aria-hidden="true">🎮 玩乐区</span>
-    <span class="${p}map-zone-label zone-label-sport" aria-hidden="true">🧗 运动区</span>
-    <span class="${p}map-zone-label zone-label-night" aria-hidden="true">🌙 夜生活</span>
+    <span class="${p}map-place-label label-metro">地铁口</span>
+    <span class="${p}map-place-label label-park">口袋公园</span>
+    <span class="${p}map-place-label label-market">小吃街</span>
+    <span class="${p}map-street-name street-name-main">Westwood Blvd</span>
+    <span class="${p}map-street-name street-name-cross">Gayley Ave</span>
+    <span class="${p}map-street-name street-name-upper">Kinross Ave</span>
+    <span class="${p}map-zone-label zone-label-dining" aria-hidden="true">餐饮区</span>
+    <span class="${p}map-zone-label zone-label-play" aria-hidden="true">玩乐区</span>
+    <span class="${p}map-zone-label zone-label-sport" aria-hidden="true">运动区</span>
+    <span class="${p}map-zone-label zone-label-night" aria-hidden="true">夜生活</span>
     ${pulse}
     <div class="user-location-pin map-user-pin" style="left:${userPin.x}%;top:${userPin.y}%"></div>
     <div class="user-radius" data-radius-km="${currentBrowseRadiusKm()}" style="left:${userPin.x}%;top:${userPin.y}%;width:${radiusSize}%;height:${radiusSize}%">${rangeLabelHTML()}</div>
@@ -588,6 +615,81 @@ function pinSummaryHTML(poi, matchScore) {
     <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
     <span class="pin-name">${escapeHTML(poi.name)}</span>
   `;
+}
+
+const MAP_CLUSTER_DEFS = [
+  { id: "food", label: "吃喝", categories: ["餐厅", "咖啡"], x: 35, y: 46, accent: "#FF6B35", tint: "#FFF4ED" },
+  { id: "night", label: "夜间", categories: ["夜宵", "酒吧"], x: 31, y: 70, accent: "#FF2442", tint: "#FFF0F3" },
+  { id: "play", label: "玩乐", categories: ["KTV", "桌游"], x: 66, y: 38, accent: "#8B5CF6", tint: "#F5F0FF" },
+  { id: "sport", label: "运动", categories: ["攀岩", "骑行"], x: 68, y: 67, accent: "#2F7EF7", tint: "#EFF5FF" }
+];
+
+function clusterDefForPoi(poi) {
+  return MAP_CLUSTER_DEFS.find((cluster) => cluster.categories.includes(poi.category)) || MAP_CLUSTER_DEFS[0];
+}
+
+function computeOpportunityScore(poi) {
+  const radius = Math.max(currentBrowseRadiusKm(), 1);
+  const distance = Number(poi.distance_km || radius);
+  const wait = Number(poi.wait_time_min || 0);
+  const demand = Number(poi.buddy_demand_count || 0);
+  const hot = Number(poi.hot_score || 0);
+  const rating = Number(poi.rating || 4.4);
+  const distanceScore = clampNumber(1 - distance / (radius + 0.35), 0, 1) * 15;
+  const waitScore = clampNumber(1 - wait / 34, 0, 1) * 13;
+  const demandScore = clampNumber(demand / 11, 0, 1) * 19;
+  const hotScore = clampNumber(hot / 100, 0, 1) * 12;
+  const ratingScore = clampNumber((rating - 4.1) / 0.8, 0, 1) * 7;
+  const filterBonus = appState.selectedCategory !== "全部" && (
+    appState.selectedCategory === categoryToActivity(poi) ||
+    String(appState.selectedCategory).startsWith("group:")
+  ) ? 3 : 0;
+  return Math.round(clampNumber(38 + distanceScore + waitScore + demandScore + hotScore + ratingScore + filterBonus, 52, 96));
+}
+
+function rankedMapPois(list = gaodePOIs) {
+  return (list || []).slice().sort((a, b) => computeOpportunityScore(b) - computeOpportunityScore(a));
+}
+
+function opportunityReasons(poi) {
+  const deal = getDeal(poi.poi_id);
+  const saved = deal ? Math.max(0, deal.original_price - deal.discount_price) : 0;
+  const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
+  return [
+    `${poi.distance_km}km 内，步行约 ${walkMin} 分钟`,
+    `${poi.buddy_demand_count} 人想约，附近同类需求集中`,
+    Number(poi.wait_time_min || 0) <= 12 ? `等待 ${poi.wait_time_min} 分钟，适合马上出门` : `等待 ${poi.wait_time_min} 分钟，建议先锁定时间`,
+    saved > 0 ? `团购可省 ¥${saved}，预算更容易对齐` : `人均 ¥${poi.avg_price}，预算清晰`
+  ];
+}
+
+function buildMapClusters(list) {
+  return MAP_CLUSTER_DEFS.map((def) => {
+    const members = (list || []).filter((poi) => clusterDefForPoi(poi).id === def.id);
+    if (!members.length) return null;
+    const totalDemand = members.reduce((sum, poi) => sum + Number(poi.buddy_demand_count || 0), 0);
+    const topScore = Math.max(...members.map(computeOpportunityScore));
+    const centroid = members.reduce((acc, poi) => {
+      const pos = poiMapPercent(poi);
+      acc.x += pos.x;
+      acc.y += pos.y;
+      return acc;
+    }, { x: 0, y: 0 });
+    const weight = members.length || 1;
+    return {
+      ...def,
+      members: rankedMapPois(members),
+      count: members.length,
+      totalDemand,
+      score: topScore,
+      x: Math.round((def.x * 0.62) + (centroid.x / weight) * 0.38),
+      y: Math.round((def.y * 0.62) + (centroid.y / weight) * 0.38)
+    };
+  }).filter(Boolean).sort((a, b) => b.score - a.score);
+}
+
+function activeMapCluster(clusters) {
+  return clusters.find((cluster) => cluster.id === appState.mapExpandedClusterId) || null;
 }
 
 function circleMoments(circle) {
@@ -1274,21 +1376,24 @@ function renderMapPage() {
       <div class="map-page-layout">
         <div id="mapStatsBar" class="stat-strip card"></div>
         <section class="map-block card map-card">
+          <div id="mapAgentToolbar" class="map-agent-toolbar"></div>
           <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
             ${("AMap" in window) ? "" : `${flatMapZonesHTML()}
             <canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>
             <div id="mockMapPins" class="map-pins-layer"></div>`}
           </div>
-          <p class="map-layout-legend">${escapeHTML(getCurrentCircle().shortName)} · ${("AMap" in window) ? "高德地图" : "街区热力 · 小点为商家"} · 点击气泡看店</p>
+          <p class="map-layout-legend" id="mapLayoutLegend"></p>
         </section>
         <section id="poiSheet" class="merchant-block poi-sheet card"></section>
       </div>
     `;
     initMockMap();
   }
+  updateMapControls();
   updateMapStats();
   updateSceneNavigator();
   syncMapRangeOverlay();
+  syncMapLayerState();
   if (mockMapReady) {
     if (amapInstance) {
       renderAmapPins();
@@ -1299,6 +1404,68 @@ function renderMapPage() {
     updatePOISheet();
   } else if (appState.selectedPOI) {
     updatePOISheet();
+  }
+}
+
+function updateMapControls() {
+  const el = document.getElementById("mapAgentToolbar");
+  if (!el) return;
+  const circle = getCurrentCircle();
+  const ranked = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
+  const best = ranked[0];
+  const bestScore = best ? computeOpportunityScore(best) : 0;
+  el.innerHTML = `
+    <div class="map-agent-copy">
+      <span>Agent 地图</span>
+      <b>${escapeHTML(circle.shortName)} · ${escapeHTML(sceneFilterLabel())}</b>
+      <small>${best ? `最佳机会 ${bestScore} 分 · ${escapeHTML(best.name)}` : "当前范围暂无地点"}</small>
+    </div>
+    <div class="map-agent-controls">
+      <div class="map-layer-switch" aria-label="地图图层">
+        ${[
+          ["normal", "普通"],
+          ["heat", "热力"]
+        ].map(([value, label]) => `
+          <button type="button" class="${appState.mapLayer === value ? "is-active" : ""}" data-map-layer="${value}">${label}</button>
+        `).join("")}
+      </div>
+      <div class="map-range-switch" aria-label="浏览范围">
+        ${[2, 3, 5].map((km) => `
+          <button type="button" class="${currentBrowseRadiusKm() === km ? "is-active" : ""}" data-map-radius="${km}">${km}km</button>
+        `).join("")}
+      </div>
+    </div>
+  `;
+  el.querySelectorAll("[data-map-layer]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      appState.mapLayer = btn.dataset.mapLayer || "heat";
+      appState.mapExpandedClusterId = null;
+      appState.mapManualPOI = false;
+      updateMapControls();
+      syncMapLayerState();
+      renderMockMapPins();
+      renderHeatCanvas();
+    });
+  });
+  el.querySelectorAll("[data-map-radius]").forEach((btn) => {
+    btn.addEventListener("click", () => applyBrowseRadius(Number(btn.dataset.mapRadius)));
+  });
+}
+
+function syncMapLayerState() {
+  const canvas = document.getElementById("mockMapCanvas");
+  const heatCanvas = document.getElementById("heatCanvas");
+  const legend = document.getElementById("mapLayoutLegend");
+  if (canvas) {
+    canvas.classList.toggle("is-heat-view", appState.mapLayer === "heat");
+    canvas.classList.toggle("is-normal-view", appState.mapLayer !== "heat");
+  }
+  if (heatCanvas) {
+    heatCanvas.style.opacity = appState.mapLayer === "heat" ? "0.66" : "0.12";
+  }
+  if (legend) {
+    const clusterText = appState.mapExpandedClusterId ? "聚合已展开，可点具体商家" : "点聚合看分散商家";
+    legend.textContent = `${getCurrentCircle().shortName} · ${appState.mapLayer === "heat" ? "成局机会热力" : "普通街区地图"} · ${clusterText}`;
   }
 }
 
@@ -1328,7 +1495,11 @@ function filteredMockPois(category) {
   const circle = getCurrentCircle();
   const inCircle = poisInCircle(circle);
   const circleIds = new Set(inCircle.map((p) => p.poi_id));
-  const all = getMockPoisWithCoords().filter((p) => circleIds.has(p.poi_id));
+  const radiusKm = currentBrowseRadiusKm();
+  const all = getMockPoisWithCoords().filter((p) => {
+    const distance = Number(p.distance_km || 0);
+    return circleIds.has(p.poi_id) && (!distance || distance <= radiusKm + 0.08);
+  });
   if (category === "全部") return all;
   if (String(category).startsWith("group:")) {
     const group = sceneGroups.find((g) => g.id === category.slice(6));
@@ -1365,6 +1536,8 @@ function activeSceneGroupId() {
 function applySceneFilter(category, options = {}) {
   const { expandNav = true } = options;
   appState.selectedCategory = category;
+  appState.mapExpandedClusterId = null;
+  appState.mapManualPOI = false;
   if (category === "全部") {
     appState.selectedSceneGroup = null;
     appState.sceneNavExpanded = false;
@@ -1390,8 +1563,8 @@ function sceneFilterLabel() {
 
 function refreshMapSupply() {
   gaodePOIs = filteredMockPois(appState.selectedCategory);
-  if (!gaodePOIs.some((p) => p.poi_id === appState.selectedPOI?.poi_id)) {
-    appState.selectedPOI = gaodePOIs[0] || null;
+  if (!appState.mapManualPOI || !gaodePOIs.some((p) => p.poi_id === appState.selectedPOI?.poi_id)) {
+    appState.selectedPOI = rankedMapPois(gaodePOIs)[0] || null;
   }
   syncMapRangeOverlay();
   if (mockMapReady) {
@@ -1402,8 +1575,10 @@ function refreshMapSupply() {
       setTimeout(renderHeatCanvas, 0);
     }
     updatePOISheet();
+    updateMapControls();
     updateMapStats();
     updateSceneNavigator();
+    syncMapLayerState();
   }
 }
 
@@ -1411,7 +1586,7 @@ function initMockMap() {
   if (!appState.selectedCircleId && lifeCircles[0]) appState.selectedCircleId = lifeCircles[0].id;
   gaodePOIs = filteredMockPois(appState.selectedCategory);
   const preSelected = appState.selectedPOI && gaodePOIs.some((p) => p.poi_id === appState.selectedPOI.poi_id);
-  if (!preSelected) appState.selectedPOI = gaodePOIs[0] || null;
+  if (!preSelected || !appState.mapManualPOI) appState.selectedPOI = rankedMapPois(gaodePOIs)[0] || null;
   if ("AMap" in window) {
     initRealMap();
   } else {
@@ -1533,53 +1708,127 @@ function renderAmapRangeCircle(AMap) {
   } catch (_) {}
 }
 
+function navigationRouteHTML(poi) {
+  if (!poi) return "";
+  const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
+  const target = poiMapPercent(poi);
+  const roadY = Math.abs(target.y - userPin.y) > 18 ? (target.y < userPin.y ? 34 : 73) : 52;
+  const midX = clampNumber((userPin.x + target.x) / 2 + (target.x > userPin.x ? 6 : -6), 18, 82);
+  const points = [
+    [userPin.x, userPin.y],
+    [userPin.x, roadY],
+    [midX, roadY],
+    [midX, target.y],
+    [target.x, target.y]
+  ];
+  const pointString = points.map(([x, y]) => `${x},${y}`).join(" ");
+  const labelPoint = [
+    clampNumber((userPin.x + target.x) / 2, 18, 82),
+    clampNumber(Math.min(userPin.y, target.y) - 10, 14, 82)
+  ];
+  const walkMin = Math.max(3, Math.round((poi.distance_km || 0.8) * 12));
+  return `
+    <svg class="map-route-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <polyline class="route-casing" points="${pointString}" />
+      <polyline class="route-line" points="${pointString}" />
+      ${points.slice(1, -1).map(([x, y]) => `<circle class="route-turn" cx="${x}" cy="${y}" r="0.8" />`).join("")}
+    </svg>
+    <div class="map-route-dist" style="left:${labelPoint[0]}%;top:${labelPoint[1]}%;">导航 ${walkMin} 分钟</div>
+  `;
+}
+
+function mapPoiButtonHTML(poi, index, options = {}) {
+  const selectedPoi = appState.selectedPOI;
+  const isSelected = poi.poi_id === (selectedPoi && selectedPoi.poi_id);
+  const matchScore = options.matchScore || computeOpportunityScore(poi);
+  const isAI = options.ai !== false && matchScore >= 82;
+  const isDimmed = options.dimmed ? "is-dimmed" : "";
+  const sizeClass = isAI || poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
+  const pos = poiMapPercent(poi);
+  const g = poiPhotoGradient(poi);
+  return `
+    <button type="button" class="map-pin pin-enter ${isAI ? "is-ai" : isHotPoi(poi) ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${isDimmed} ${sizeClass}"
+      data-poi-id="${poi.poi_id}" data-category="${poi.category}"
+      style="left:${pos.x}%;top:${pos.y}%;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 6) * 0.16}s"
+      title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约 · Agent ${matchScore}分"
+      aria-label="${escapeHTML(poi.name)}，${escapeHTML(poi.category)}，Agent ${matchScore} 分">
+      ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
+      ${pinSummaryHTML(poi, matchScore)}
+    </button>
+  `;
+}
+
 function renderMockMapPins() {
   const layer = document.getElementById("mockMapPins");
   if (!layer) return;
-  const matchScoreMap = {};
-  appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
-  const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
-  const selectedPoi = appState.selectedPOI;
-  // SVG route connector from user pin to selected POI
-  let routeSVG = "";
-  if (selectedPoi) {
-    const spx = selectedPoi.mapX != null ? selectedPoi.mapX : poiMapPercent(selectedPoi).x;
-    const spy = selectedPoi.mapY != null ? selectedPoi.mapY : poiMapPercent(selectedPoi).y;
-    const walkMin = Math.max(2, Math.round((selectedPoi.distance_km || 0.8) * 12));
-    routeSVG = `
-      <svg class="map-route-svg" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;">
-        <line x1="${userPin.x}%" y1="${userPin.y}%" x2="${spx}%" y2="${spy}%"
-          stroke="#FFE033" stroke-width="2.5" stroke-dasharray="6 4"
-          stroke-linecap="round" opacity="0.85"/>
-      </svg>
-      <div class="map-route-dist" style="left:${(userPin.x + spx) / 2}%;top:${(userPin.y + spy) / 2}%;">步行约 ${walkMin} 分钟</div>
-    `;
+  const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
+  const ranked = rankedMapPois(list);
+  const clusters = buildMapClusters(list);
+  const expanded = activeMapCluster(clusters);
+  const selectedPoi = appState.mapManualPOI && appState.selectedPOI && list.some((p) => p.poi_id === appState.selectedPOI.poi_id)
+    ? appState.selectedPOI
+    : ranked[0];
+  if (selectedPoi && (!appState.selectedPOI || appState.selectedPOI.poi_id !== selectedPoi.poi_id)) {
+    appState.selectedPOI = selectedPoi;
   }
-  layer.innerHTML = routeSVG + gaodePOIs.map((poi, index) => {
-    const isHot = isHotPoi(poi);
-    const isSelected = poi.poi_id === (selectedPoi && selectedPoi.poi_id);
-    const matchScore = matchScoreMap[poi.poi_id];
-    const isAI = Boolean(matchScore);
-    const sizeClass = isAI ? "pin-lg" : poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
-    const x = poi.mapX != null ? poi.mapX : poiMapPercent(poi).x;
-    const y = poi.mapY != null ? poi.mapY : poiMapPercent(poi).y;
-    const g = poiPhotoGradient(poi);
+
+  const featuredIds = new Set(ranked.slice(0, appState.mapLayer === "heat" ? 1 : 5).map((p) => p.poi_id));
+  const visiblePois = expanded ? expanded.members.slice(0, 10) : ranked.filter((p) => featuredIds.has(p.poi_id));
+  const topScore = ranked[0] ? computeOpportunityScore(ranked[0]) : 0;
+  const routeHTML = navigationRouteHTML(selectedPoi);
+  const clusterHTML = clusters.map((cluster, index) => {
+    const isActive = expanded && expanded.id === cluster.id;
+    const hiddenByExpansion = expanded && !isActive;
     return `
-      <button type="button" class="map-pin pin-enter ${isAI ? "is-ai" : isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}"
-        data-poi-id="${poi.poi_id}" data-category="${poi.category}"
-        style="left:${x}%;top:${y}%;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 6) * 0.16}s"
-        title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约${matchScore ? ` · AI ${matchScore}分` : ""}"
-        aria-label="${escapeHTML(poi.name)}，${escapeHTML(poi.category)}，${poi.buddy_demand_count} 人想约">
-        ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
-        ${pinSummaryHTML(poi, matchScore)}
+      <button type="button" class="map-cluster-pin ${isActive ? "is-expanded" : ""} ${hiddenByExpansion ? "is-muted" : ""}"
+        data-cluster-id="${cluster.id}"
+        style="left:${cluster.x}%;top:${cluster.y}%;--cluster-color:${cluster.accent};--cluster-bg:${cluster.tint};--float-delay:${(index % 4) * 0.12}s"
+        aria-label="${cluster.label}聚合，${cluster.count}家，${cluster.totalDemand}人想约">
+        <b>${escapeHTML(cluster.label)}</b>
+        <span>${cluster.count}家 · ${cluster.totalDemand}人</span>
       </button>
     `;
   }).join("");
+  const expandedPanel = expanded ? `
+    <div class="map-expanded-panel">
+      <div>
+        <b>${escapeHTML(expanded.label)}已展开</b>
+        <span>${expanded.count} 家店 · 最高机会 ${expanded.score} 分</span>
+      </div>
+      <button type="button" id="collapseMapCluster">收起</button>
+    </div>
+  ` : `
+    <div class="map-agent-note">
+      <b>${topScore ? `${topScore} 分` : "待计算"}</b>
+      <span>${selectedPoi ? `优先看 ${escapeHTML(selectedPoi.name)}` : "换个范围发现更多"}</span>
+    </div>
+  `;
+  layer.innerHTML = routeHTML + clusterHTML + visiblePois.map((poi, index) => (
+    mapPoiButtonHTML(poi, index, { matchScore: computeOpportunityScore(poi), dimmed: expanded && poi.poi_id !== selectedPoi?.poi_id })
+  )).join("") + expandedPanel;
+
+  layer.querySelectorAll(".map-cluster-pin[data-cluster-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      appState.mapExpandedClusterId = btn.dataset.clusterId || null;
+      appState.mapManualPOI = false;
+      const nextCluster = buildMapClusters(list).find((cluster) => cluster.id === appState.mapExpandedClusterId);
+      if (nextCluster && nextCluster.members[0]) appState.selectedPOI = nextCluster.members[0];
+      renderMockMapPins();
+      updatePOISheet();
+      syncMapLayerState();
+    });
+  });
+  layer.querySelector("#collapseMapCluster")?.addEventListener("click", () => {
+    appState.mapExpandedClusterId = null;
+    renderMockMapPins();
+    syncMapLayerState();
+  });
   layer.querySelectorAll(".map-pin[data-poi-id]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const poi = gaodePOIs.find((p) => p.poi_id === btn.dataset.poiId) || pois.find((p) => p.poi_id === btn.dataset.poiId);
+      const poi = list.find((p) => p.poi_id === btn.dataset.poiId) || pois.find((p) => p.poi_id === btn.dataset.poiId);
       if (!poi) return;
       appState.selectedPOI = poi;
+      appState.mapManualPOI = true;
       renderMockMapPins();
       updatePOISheet();
       const sheet = document.getElementById("poiSheet");
@@ -1607,9 +1856,10 @@ function heatWeightForPoi(poi) {
   const hot = Number(poi.hot_score || 0);
   const wait = Number(poi.wait_time_min || 0);
   const rating = Number(poi.rating || 4.4);
+  const opportunity = computeOpportunityScore(poi);
   const waitBonus = clampNumber(1 - wait / 38, 0, 1) * 2.4;
   const ratingBonus = clampNumber(rating - 4.2, 0, 0.8) * 2.2;
-  return demand * 1.9 + hot / 12 + waitBonus + ratingBonus;
+  return demand * 1.65 + hot / 13 + waitBonus + ratingBonus + opportunity / 9;
 }
 
 function poiDensityBoost(poi, poiList) {
@@ -1640,18 +1890,22 @@ function drawHeatOnCanvas(canvasEl, poiList, slotMult) {
   const maxW = Math.max(...weights, 1);
   const isMini = h <= 150;
 
+  const radiusKm = currentBrowseRadiusKm();
+  const isOpportunityLayer = appState.mapLayer === "heat";
   poiList.forEach((poi, i) => {
     const density = poiDensityBoost(poi, poiList);
     const isHot = isHotPoi(poi);
     // Hot POIs get boosted intensity to create concentrated "hot zones"
-    const hotBoost = isHot ? 1.32 : 0.72;
-    const intensity = clampNumber((weights[i] / maxW) * (0.78 + density * 0.08) * slotMult * hotBoost, 0, 1);
-    if (intensity < 0.08) return; // cut weak glows earlier so non-hot zones stay dim
+    const hotBoost = isHot ? 1.28 : 0.78;
+    const layerBoost = isOpportunityLayer ? 1 : 0.42;
+    const intensity = clampNumber((weights[i] / maxW) * (0.76 + density * 0.09) * slotMult * hotBoost * layerBoost, 0, 1);
+    if (intensity < (isOpportunityLayer ? 0.07 : 0.12)) return; // normal layer keeps heat as a quiet hint
     const x = (poiMapPercent(poi).x / 100) * w;
     const y = (poiMapPercent(poi).y / 100) * h;
     // Hot POIs have larger radius; normal POIs are smaller to avoid uniform glow
-    const baseRadius = isMini ? 13 : (isHot ? 32 : 18);
-    const radius = baseRadius + intensity * (isMini ? 28 : (isHot ? 72 : 44));
+    const rangeScale = clampNumber(0.78 + radiusKm * 0.12, 0.95, 1.42);
+    const baseRadius = isMini ? 13 : (isHot ? 30 : 17);
+    const radius = (baseRadius + intensity * (isMini ? 28 : (isHot ? 76 : 48))) * rangeScale;
     const [r, g, b] = hexToRgb(poiPhotoGradient(poi).accent);
     const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
     const a = (isMini ? 0.12 : 0.10) + intensity * (isMini ? 0.36 : (isHot ? 0.48 : 0.30));
@@ -1750,6 +2004,8 @@ function updatePOISheet() {
   const fit = merchantFitSummary(poi);
   const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
   const dealText = merchantDealShort(poi);
+  const opportunityScore = computeOpportunityScore(poi);
+  const reasons = opportunityReasons(poi);
   el.innerHTML = `
     <div class="merchant-hero" style="background-image:url('${poiCoverImage(poi)}')"></div>
     <div class="merchant-detail-body map-merchant-body">
@@ -1778,13 +2034,22 @@ function updatePOISheet() {
         const formingLabel = opp.formingCount >= 2 ? `${opp.formingCount} 个即将成局` : "随时可加入";
         return `
           <div class="map-opportunity-card">
-            <p style="font-size:11px;font-weight:700;color:#92700a;margin-bottom:8px;">这里为什么容易成局</p>
+            <div class="map-opportunity-head">
+              <div>
+                <span>Agent 判断</span>
+                <b>${opportunityScore} 分机会</b>
+              </div>
+              <strong>${formingLabel}</strong>
+            </div>
             <div class="map-opportunity-grid">
               <div><b>${opp.demandCount}</b><span>人最近想约</span></div>
-              <div><b>${formingLabel}</b><span>成局进度</span></div>
+              <div><b>${escapeHTML(merchantWaitLabel(poi))}</b><span>等待状态</span></div>
               <div><b>${opp.waitLabel}</b><span>当前等待</span></div>
               <div><b>${opp.savedLabel}</b><span>团购优惠</span></div>
             </div>
+            <ul class="map-opportunity-reasons">
+              ${reasons.slice(0, 3).map((reason) => `<li>${escapeHTML(reason)}</li>`).join("")}
+            </ul>
           </div>
         `;
       })()}
@@ -1792,7 +2057,7 @@ function updatePOISheet() {
       <section class="map-merchant-section">
         <div class="map-merchant-section-head">
           <h3>适合这样约</h3>
-          ${matchScore ? `<span class="sheet-match">AI ${matchScore}%</span>` : `<span>${escapeHTML(poi.category)}</span>`}
+          ${matchScore ? `<span class="sheet-match">AI ${matchScore}%</span>` : `<span>Agent ${opportunityScore}</span>`}
         </div>
         <b>${escapeHTML(fit.title)}</b>
         <p>${escapeHTML(fit.text)}</p>
