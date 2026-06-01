@@ -99,9 +99,9 @@ const appState = {
   lastRejectRematch: null,
   selectedCircleId: lifeCircles[0]?.id || "near",
   circlePageOpen: false,
-  browseRadiusKm: 5,
+  browseRadiusKm: 2,
   circleTimeSlot: "now",
-  mapLayer: "heat",
+  mapLayer: "normal",
   mapExpandedClusterId: null,
   mapManualPOI: false,
   agentMemory: null,
@@ -225,6 +225,34 @@ function circleStats(circle) {
   };
 }
 
+const BROWSE_RADIUS_PRESETS = [
+  { value: 2, label: "附近" },
+  { value: 5, label: "城市" },
+  { value: 99, label: "全部" }
+];
+
+function activeGroupCount(circle) {
+  const poiIds = new Set(poisInCircle(circle).map((p) => p.poi_id));
+  const activePoiIds = new Set(
+    buddyDemands.filter((d) => poiIds.has(d.poi_id)).map((d) => d.poi_id)
+  );
+  const hotPois = poisInCircle(circle).filter((p) => (p.buddy_demand_count || 0) >= 3).length;
+  const count = activePoiIds.size || hotPois;
+  return Math.min(12, Math.max(1, count));
+}
+
+function areaPillSubtitle(circle) {
+  const n = activeGroupCount(circle);
+  if (n <= 2) return "附近挺热闹";
+  if (n >= 10) return "附近很热闹";
+  return `今晚附近有 ${n} 个活跃组局`;
+}
+
+function browseRadiusPresetLabel(km) {
+  const match = BROWSE_RADIUS_PRESETS.find((p) => Math.abs(km - p.value) < 0.01);
+  return match ? match.label : "附近";
+}
+
 function init() {
   const allInitUsers = [...users, ...backgroundUsers];
   appState.groupChats = matchPlans.slice(0, 3).map((plan) => {
@@ -283,6 +311,8 @@ function applyBrowseRadius(km) {
   refreshMapSupply();
   syncMapRangeOverlay();
   updateAreaPill();
+  updateRefRadiusRow();
+  updateRefMapHeading();
 }
 
 function selectLifeCircle(circleId) {
@@ -292,7 +322,7 @@ function selectLifeCircle(circleId) {
   const circle = getCurrentCircle();
   applyBrowseRadius(circle.radius_km || 2);
   // 不关闭圈子浮层，不跳页：就地刷新浮层内容
-  if (document.querySelector(".circle-page")) renderCirclePage();
+  if (document.getElementById("circlePage")) renderCirclePage();
   showToast(`已切换到「${circle.shortName}」`);
 }
 
@@ -416,16 +446,16 @@ function render() {
     const active = item.dataset.page === appState.currentPage || (appState.currentPage === "success" && item.dataset.page === "chat");
     item.classList.toggle("text-ink", active);
     item.classList.toggle("text-muted", !active);
-    item.querySelector(".nav-icon")?.classList.toggle("bg-brand", active);
+    item.querySelector(".nav-icon")?.classList.toggle("bg-ink", active);
+    item.querySelector(".nav-icon")?.classList.toggle("text-white", active);
+    item.querySelector(".nav-icon")?.classList.toggle("bg-brand", false);
     item.querySelector(".nav-icon")?.classList.toggle("rounded-xl", active);
     item.querySelector(".nav-icon")?.classList.toggle("rounded-lg", !active);
   });
-  updateAreaPill();
   updateChatNavBadge();
   document.body.classList.toggle("is-discover-page", appState.currentPage === "map");
-  const discoverExtras = document.getElementById("discoverHeaderExtras");
-  if (discoverExtras) discoverExtras.hidden = appState.currentPage !== "map";
   if (appState.currentPage === "map") renderMapPage();
+  else updateAreaPill();
   renderAIPage();
   renderChatPage();
   renderSuccessPage();
@@ -489,17 +519,12 @@ function poiBadgeHTML(poi) {
 function updateAreaPill() {
   const el = $("#areaLabel");
   if (!el) return;
-  const shouldShow = appState.currentPage === "map";
-  el.hidden = !shouldShow;
-  el.setAttribute("aria-hidden", shouldShow ? "false" : "true");
-  if (!shouldShow) return;
   const circle = getCurrentCircle();
-  const stats = circleStats(circle);
   el.innerHTML = `
-    <span class="${TW.locPin}" aria-hidden="true" style="background:${circle.tint || "#FFF8E6"};border:2px solid ${circle.accent || "#FF6B35"}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="${circle.accent || "#FF6B35"}"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+    <span class="${TW.locPin}" aria-hidden="true" style="background:${circle.tint || "#F5F5F5"};border:1px solid ${circle.accent || "#EBEBEB"}">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="${circle.accent || "#757575"}"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
     </span>
-    <span class="${TW.locCopy}"><b>${escapeHTML(circle.shortName)}</b><small>${stats.buddies} 人想找搭子 · ${stats.shops} 家店 · 约 ${appState.browseRadiusKm}km</small></span>
+    <span class="${TW.locCopy}"><b>${escapeHTML(circle.shortName)}</b></span>
     <span class="${TW.locChev}" aria-hidden="true">›</span>
   `;
   bindAreaPill();
@@ -515,7 +540,9 @@ function browseRadiusVisualSize() {
 }
 
 function rangeLabelHTML() {
-  return `<span class="user-radius-label">${currentBrowseRadiusKm()}km</span>`;
+  const km = currentBrowseRadiusKm();
+  const label = km >= 50 ? "全部" : `${km}km`;
+  return `<span class="user-radius-label">${label}</span>`;
 }
 
 function syncMapRangeOverlay() {
@@ -533,8 +560,22 @@ function syncMapRangeOverlay() {
       label.className = "user-radius-label";
       el.appendChild(label);
     }
-    label.textContent = `${currentBrowseRadiusKm()}km`;
+    label.textContent = currentBrowseRadiusKm() >= 50 ? "全部" : `${currentBrowseRadiusKm()}km`;
   });
+}
+
+function flatMapDiscoverHTML() {
+  const userPin = MAP_LAYOUT.user_pin || { x: 48, y: 54 };
+  const radiusSize = browseRadiusVisualSize();
+  return `
+    <div class="map-grid" aria-hidden="true"></div>
+    <div class="map-street street-h street-h-2" aria-hidden="true"></div>
+    <div class="map-street street-v street-v-2" aria-hidden="true"></div>
+    <div class="map-road road-main" aria-hidden="true"></div>
+    <div class="map-road road-cross" aria-hidden="true"></div>
+    <div class="user-location-pin map-user-pin" style="left:${userPin.x}%;top:${userPin.y}%"></div>
+    <div class="user-radius" data-radius-km="${currentBrowseRadiusKm()}" style="left:${userPin.x}%;top:${userPin.y}%;width:${radiusSize}%;height:${radiusSize}%">${rangeLabelHTML()}</div>
+  `;
 }
 
 function flatMapZonesHTML(classPrefix = "", options = {}) {
@@ -1025,11 +1066,11 @@ function renderCirclePage() {
 
   page = document.createElement("div");
   page.id = "circlePage";
-  page.className = "circle-page";
+  page.className = TW.circlePage;
   page.innerHTML = `
     <header class="${TW.circlePageHeader}">
       <button type="button" class="${TW.backTextBtn}" id="closeCirclePage">返回</button>
-      <h1>发现</h1>
+      <h1>生活圈</h1>
     </header>
     <div class="${TW.circlePageBody}">
       <section class="${TW.circleHero}" style="--circle-tint:${current.tint}">
@@ -1093,8 +1134,8 @@ function renderCirclePage() {
 
         <div class="${TW.discoverControlLabel}">浏览范围</div>
         <div class="${TW.radiusRow}" id="radiusRow">
-          ${[2, 3, 5].map((km) => `
-            <button type="button" class="${TW.radiusChip} ${appState.browseRadiusKm === km ? "is-active" : ""}" data-radius="${km}">${km} km</button>
+          ${BROWSE_RADIUS_PRESETS.map(({ value, label }) => `
+            <button type="button" class="${TW.radiusChip} ${Math.abs(appState.browseRadiusKm - value) < 0.01 ? "is-active" : ""}" data-radius="${value}">${label}</button>
           `).join("")}
         </div>
 
@@ -1183,7 +1224,7 @@ function renderCirclePage() {
             <button type="button" class="${TW.textButton}" data-join="${escapeHTML(d.demand_id)}">加入</button>
           </div>
         `).join("") || `<p class="${TW.muted}" style="font-size:12px;margin-top:8px;">当前筛选下暂无可加入的局。</p>`}
-        <button type="button" class="${TW.primaryButton} ${TW.wide}" id="circleGoMatch" style="margin-top:12px">用${escapeHTML(brand.name)}匹配一个搭子</button>
+        <button type="button" class="${TW.primaryButton} ${TW.wide}" id="circleGoMatch" style="margin-top:12px">快速匹配搭子</button>
       </section>
     </div>
   `;
@@ -1243,28 +1284,21 @@ function renderCirclePage() {
     applySceneFilter("全部", { expandNav: false });
     renderCirclePage();
   });
-  page.querySelectorAll(".circle-moment[data-poi], .circle-hot-card[data-poi], .mini-merchant-pin[data-poi]").forEach((btn) => {
+  page.querySelectorAll("#circlePage [data-poi]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const poi = pois.find((p) => p.poi_id === btn.dataset.poi);
       if (!poi) return;
       appState.selectedPOI = poi;
+      appState.mapManualPOI = true;
       closeCirclePage();
       setPage("map");
       setTimeout(() => {
+        renderMockMapPins();
         updatePOISheet();
+        updateRefMapVisual();
         const sheet = document.getElementById("poiSheet");
         if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 80);
-    });
-  });
-  page.querySelectorAll(".discover-poi-row[data-poi]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poi = pois.find((p) => p.poi_id === btn.dataset.poi);
-      if (!poi) return;
-      appState.selectedPOI = poi;
-      closeCirclePage();
-      setPage("map");
-      setTimeout(updatePOISheet, 80);
     });
   });
   page.querySelector("#circleSeeMap").addEventListener("click", () => {
@@ -1389,26 +1423,31 @@ function renderMapPage() {
   if (!document.getElementById("refDiscoverRoot")) {
     $("#mapPage").innerHTML = `
       <div class="${TW.refDiscover}" id="refDiscoverRoot">
+        <div class="${TW.discoverControls}">
+          <button type="button" class="${TW.locationPill}" id="areaLabel" aria-label="切换生活圈"></button>
+          <div id="discoverHeaderExtras" class="${TW.discoverHeaderExtras}">
+            <div id="refRadiusRow" class="${TW.refRadiusRow}"></div>
+          </div>
+        </div>
         <div class="${TW.refMapBlock}">
           <div class="${TW.refMapHeading}" id="refMapHeading"></div>
-          <div id="mapAgentToolbar" class="${TW.refMapChips}"></div>
+          <div id="filterTabsRow" class="${TW.refMapChips}"></div>
           <div class="${TW.refMapCard}">
             <div class="${TW.refMapVisual}" id="refMapVisual">
-              <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map is-heat-view"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
-                ${("AMap" in window) ? "" : `${flatMapZonesHTML()}
-                <canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.66;border-radius:0;"></canvas>
+              <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map is-discover-view"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
+                ${("AMap" in window) ? "" : `${flatMapDiscoverHTML()}
                 <div id="mockMapPins" class="map-pins-layer"></div>`}
               </div>
               <div class="${TW.refMapOverlay}">
-                <div id="refMapBubbles" class="map-float-tags"></div>
                 <div id="refMapFooter" class="${TW.refMapFooter}"></div>
                 <button type="button" class="${TW.refMapLocate}" id="refMapLocate" aria-label="定位到我的位置">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="#1A73E8"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#1A73E8" stroke-width="2" stroke-linecap="round"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="#2F7EF7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#2F7EF7" stroke-width="2" stroke-linecap="round"/></svg>
                 </button>
               </div>
             </div>
           </div>
         </div>
+        <section id="discoverRecommend" class="${TW.discoverRecommend}" hidden></section>
         <section id="poiSheet" class="${TW.refPoiCard}"></section>
       </div>
     `;
@@ -1419,18 +1458,16 @@ function renderMapPage() {
     initMockMap();
   }
   updateRefRadiusRow();
+  updateAreaPill();
   updateRefMapHeading();
-  updateMapControls();
-  updateMapStats();
   updateSceneNavigator();
+  updateDiscoverRecommend();
   syncMapRangeOverlay();
-  syncMapLayerState();
   if (mockMapReady) {
     if (amapInstance) {
       renderAmapPins();
     } else {
       renderMockMapPins();
-      setTimeout(renderHeatCanvas, 0);
     }
     updateRefMapVisual();
     updatePOISheet();
@@ -1444,17 +1481,13 @@ function updateRefRadiusRow() {
   const el = document.getElementById("refRadiusRow");
   if (!el) return;
   const km = currentBrowseRadiusKm();
-  el.innerHTML = [
-    [5, "5km · 推荐"],
-    [2, "2km · 附近"],
-    [0.5, "500m · 步行"]
-  ].map(([value, label]) => `
+  el.innerHTML = BROWSE_RADIUS_PRESETS.map(({ value, label }) => `
     <button type="button" class="${TW.radiusPill} ${Math.abs(km - value) < 0.01 ? "is-active" : ""}" data-ref-radius="${value}">${label}</button>
   `).join("");
   el.querySelectorAll("[data-ref-radius]").forEach((btn) => {
     btn.addEventListener("click", () => {
       applyBrowseRadius(Number(btn.dataset.refRadius));
-      showToast(`浏览范围已更新为 ${currentBrowseRadiusKm() >= 1 ? `${currentBrowseRadiusKm()}km` : "500m"}`);
+      showToast(`已切换到${browseRadiusPresetLabel(Number(btn.dataset.refRadius))}范围`);
     });
   });
 }
@@ -1465,57 +1498,18 @@ function updateRefMapHeading() {
   const circle = getCurrentCircle();
   const poi = appState.selectedPOI;
   el.innerHTML = `
-    <b>${escapeHTML(circle.shortName)} · ${escapeHTML(sceneFilterLabel())}</b>
-    <small>${poi ? escapeHTML(poi.name) : "Agent 帮你选最适合成局的地方"}</small>
+    <h2 class="text-lg font-bold text-ink leading-snug">${escapeHTML(poi ? poi.name : "今晚推荐")}</h2>
+    <p class="text-[13px] text-muted mt-1.5 leading-snug">${poi ? `${poi.buddy_demand_count >= 2 ? `${poi.buddy_demand_count} 人正在组局` : "有人在组局"} · ${Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12))} 分钟可达` : `${escapeHTML(circle.shortName)} · ${browseRadiusPresetLabel(currentBrowseRadiusKm())}`}</p>
   `;
 }
 
 function updateRefMapVisual() {
-  updateRefBubbles();
   updateRefMapFooter();
 }
 
 function updateRefBubbles() {
   const el = document.getElementById("refMapBubbles");
-  if (!el) return;
-  const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
-  const clusters = buildMapClusters(list);
-  const selectedPoi = appState.selectedPOI;
-  const bubblePos = {
-    food: { x: 22, y: 44 },
-    night: { x: 18, y: 72 },
-    play: { x: 72, y: 30 },
-    sport: { x: 74, y: 68 }
-  };
-  el.innerHTML = MAP_CLUSTER_DEFS.map((def) => {
-    const cluster = clusters.find((c) => c.id === def.id);
-    const demand = cluster ? cluster.totalDemand : 0;
-    const isActive = selectedPoi && cluster && cluster.members.some((p) => p.poi_id === selectedPoi.poi_id);
-    const pos = bubblePos[def.id] || { x: def.x, y: def.y };
-    return `
-      <button type="button" class="${TW.refBubble} ${isActive ? "is-active" : ""}" data-ref-cluster="${def.id}"
-        style="left:${pos.x}%;top:${pos.y}%;">
-        <span class="${TW.refBubbleDot}" style="background:${def.accent}"></span>
-        ${escapeHTML(def.label)}
-        ${demand ? `<span class="${TW.refBubbleMeta}">${demand}人</span>` : ""}
-      </button>
-    `;
-  }).join("");
-  el.querySelectorAll("[data-ref-cluster]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const cluster = buildMapClusters(list).find((c) => c.id === btn.dataset.refCluster);
-      if (cluster && cluster.members[0]) {
-        appState.selectedPOI = cluster.members[0];
-        appState.mapManualPOI = true;
-        appState.mapExpandedClusterId = cluster.id;
-        refreshMapSupply();
-        updateRefMapHeading();
-        renderMockMapPins();
-        updateRefMapVisual();
-        updatePOISheet();
-      }
-    });
-  });
+  if (el) el.innerHTML = "";
 }
 
 function updateRefMapFooter() {
@@ -1524,11 +1518,9 @@ function updateRefMapFooter() {
   const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
   const ranked = rankedMapPois(list);
   const best = appState.selectedPOI || ranked[0];
-  const score = best ? computeOpportunityScore(best) : 0;
-  el.innerHTML = `
-    <b>${score || "—"} 分</b>
-    <span>${best ? `优先看 ${escapeHTML(best.name)}` : "换个范围发现更多"}</span>
-  `;
+  el.innerHTML = best
+    ? `<span>${escapeHTML(best.name)}</span><span class="text-muted">· ${best.buddy_demand_count >= 5 ? "很多人在去" : "今晚推荐"}</span>`
+    : `<span class="text-muted">换个范围看看更多推荐</span>`;
 }
 
 function updateRefStickyBar(poi, demands) {
@@ -1543,16 +1535,15 @@ function bindRefPoiActions(poi, demands) {
     appState.parsedIntent = null;
     appState.matchResults = [];
     appState.aiHasRun = false;
-    showToast("已将该地点加入匹配条件");
+    showToast("已为你开始快速匹配");
     render();
     setTimeout(() => runAI(), 450);
   });
   document.getElementById("poiJoinBtn")?.addEventListener("click", () => {
     const d = demands[0];
     if (d) joinDemandFromRefSheet(d.demand_id, poi, demands);
-    else showToast("暂无等待中的局，已为你发起搭子匹配");
+    else showToast("暂无等待中的局，已为你发起匹配");
   });
-  document.getElementById("poiNavBtn")?.addEventListener("click", () => showPoiNavHint(poi));
 }
 
 function joinDemandFromRefSheet(demandId, poi, demands) {
@@ -1573,46 +1564,14 @@ function joinDemandFromRefSheet(demandId, poi, demands) {
 
 function updateMapControls() {
   const el = document.getElementById("mapAgentToolbar");
-  if (!el) return;
-  const km = currentBrowseRadiusKm();
-  el.innerHTML = `
-    <button type="button" class="${TW.refMapChip} ${appState.mapLayer === "normal" ? "is-active" : ""}" data-map-layer="normal">推荐</button>
-    <button type="button" class="${TW.refMapChip} ${appState.mapLayer === "heat" ? "is-active" : ""}" data-map-layer="heat">热力</button>
-    ${[2, 3, 5].map((radius) => `
-      <button type="button" class="${TW.refMapChip} ${Math.abs(km - radius) < 0.01 ? "is-active" : ""}" data-map-radius="${radius}">${radius}km</button>
-    `).join("")}
-  `;
-  el.querySelectorAll("[data-map-layer]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      appState.mapLayer = btn.dataset.mapLayer || "heat";
-      appState.mapExpandedClusterId = null;
-      appState.mapManualPOI = false;
-      updateMapControls();
-      syncMapLayerState();
-      renderMockMapPins();
-      updateRefMapVisual();
-      renderHeatCanvas();
-    });
-  });
-  el.querySelectorAll("[data-map-radius]").forEach((btn) => {
-    btn.addEventListener("click", () => applyBrowseRadius(Number(btn.dataset.mapRadius)));
-  });
+  if (el) el.innerHTML = "";
 }
 
 function syncMapLayerState() {
   const canvas = document.getElementById("mockMapCanvas");
-  const heatCanvas = document.getElementById("heatCanvas");
-  const legend = document.getElementById("mapLayoutLegend");
   if (canvas) {
-    canvas.classList.toggle("is-heat-view", appState.mapLayer === "heat");
-    canvas.classList.toggle("is-normal-view", appState.mapLayer !== "heat");
-  }
-  if (heatCanvas) {
-    heatCanvas.style.opacity = appState.mapLayer === "heat" ? "0.66" : "0.12";
-  }
-  if (legend) {
-    const clusterText = appState.mapExpandedClusterId ? "聚合已展开，可点具体商家" : "点聚合看分散商家";
-    legend.textContent = `${getCurrentCircle().shortName} · ${appState.mapLayer === "heat" ? "成局机会热力" : "普通街区地图"} · ${clusterText}`;
+    canvas.classList.add("is-discover-view");
+    canvas.classList.remove("is-heat-view");
   }
 }
 
@@ -1719,7 +1678,7 @@ function refreshMapSupply() {
       renderAmapPins();
     } else {
       renderMockMapPins();
-      setTimeout(renderHeatCanvas, 0);
+      if (!document.getElementById("refDiscoverRoot")) setTimeout(renderHeatCanvas, 0);
     }
     updatePOISheet();
     updateRefMapVisual();
@@ -1728,6 +1687,7 @@ function refreshMapSupply() {
     updateMapControls();
     updateMapStats();
     updateSceneNavigator();
+    updateDiscoverRecommend();
     syncMapLayerState();
   }
 }
@@ -1750,7 +1710,6 @@ function initMockMap() {
 function initFakeMap() {
   mockMapReady = true;
   renderMockMapPins();
-  setTimeout(renderHeatCanvas, 0);
   updateMapStats();
   updateRefMapVisual();
   updatePOISheet();
@@ -1758,8 +1717,8 @@ function initFakeMap() {
 
 function initRealMap() {
   const circle = getCurrentCircle();
-  const centerLng = circle.center_lng || -118.4452;
-  const centerLat = circle.center_lat || 34.0629;
+  const centerLng = circle.center_lng || mockData.mapCenter.lng;
+  const centerLat = circle.center_lat || mockData.mapCenter.lat;
   const container = document.getElementById("mockMapCanvas");
   if (!container) { initFakeMap(); return; }
   try {
@@ -1781,9 +1740,8 @@ function initRealMap() {
     updatePOISheet();
   } catch (err) {
     console.warn("[AMap] 初始化失败，降级为平面示意地图", err);
-    container.className = "fake-map";
-    container.innerHTML = flatMapZonesHTML() +
-      '<canvas id="heatCanvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;opacity:0.58;border-radius:12px;"></canvas>' +
+    container.className = "fake-map is-discover-view";
+    container.innerHTML = flatMapDiscoverHTML() +
       '<div id="mockMapPins" class="map-pins-layer"></div>';
     amapInstance = null;
     initFakeMap();
@@ -1800,14 +1758,21 @@ function renderAmapPins() {
 
   renderAmapRangeCircle(AMap);
 
-  gaodePOIs.forEach((poi, index) => {
+  const poisToShow = isDiscoverMapView()
+    ? rankedMapPois(gaodePOIs).slice(0, 5)
+    : gaodePOIs;
+
+  poisToShow.forEach((poi, index) => {
     if (!poi.lng || !poi.lat) return;
-    const isSelected = poi.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id);
+    const isSelected = isDiscoverMapView() ? isDiscoverPinSelected(poi) : poi.poi_id === (appState.selectedPOI && appState.selectedPOI.poi_id);
+    const isDiscover = isDiscoverMapView();
     const matchScore = matchScoreMap[poi.poi_id];
     const isHot = poi.hot_score > 80;
     const sizeClass = poi.buddy_demand_count >= 7 ? "pin-lg" : poi.buddy_demand_count <= 3 ? "pin-sm" : "";
     const g = poiPhotoGradient(poi);
-    const pinHTML = `
+    const pinHTML = isDiscover
+      ? discoverAmapPinHTML(poi, index)
+      : `
       <div class="map-pin pin-enter ${isHot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} ${sizeClass}"
            style="cursor:pointer;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 6) * 0.16}s"
            title="${escapeHTML(poi.name)}：${poi.buddy_demand_count} 人想约">
@@ -1818,16 +1783,19 @@ function renderAmapPins() {
       const marker = new AMap.Marker({
         position: new AMap.LngLat(poi.lng, poi.lat),
         content: pinHTML,
-        anchor: "bottom-center",
+        anchor: isDiscover ? (isSelected ? "bottom-center" : "center") : "bottom-center",
         offset: new AMap.Pixel(0, 0),
-        title: poi.name
+        title: poi.name,
+        zIndex: isSelected ? 120 : 100
       });
       marker.on("click", () => {
         appState.selectedPOI = poi;
+        if (isDiscover) appState.mapManualPOI = true;
         renderAmapPins();
+        updateRefMapVisual();
         updatePOISheet();
         const sheet = document.getElementById("poiSheet");
-        if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
       amapInstance.add(marker);
     } catch (_) {}
@@ -1837,8 +1805,8 @@ function renderAmapPins() {
 function renderAmapRangeCircle(AMap) {
   if (!amapInstance || !AMap) return;
   const circle = getCurrentCircle();
-  const centerLng = circle.center_lng || -118.4452;
-  const centerLat = circle.center_lat || 34.0629;
+  const centerLng = circle.center_lng || mockData.mapCenter.lng;
+  const centerLat = circle.center_lat || mockData.mapCenter.lat;
   const radiusKm = currentBrowseRadiusKm();
   try {
     const center = new AMap.LngLat(centerLng, centerLat);
@@ -1913,30 +1881,103 @@ function mapPoiButtonHTML(poi, index, options = {}) {
   `;
 }
 
+function isDiscoverMapView() {
+  return !!document.getElementById("refDiscoverRoot");
+}
+
+function isDiscoverPinSelected(poi) {
+  return !!(appState.mapManualPOI && poi && appState.selectedPOI && poi.poi_id === appState.selectedPOI.poi_id);
+}
+
+const DISCOVER_PIN_MARKER_SVG = `<svg class="discover-pin-drop-svg" viewBox="0 0 24 36" width="32" height="42" aria-hidden="true"><path d="M12 0C5.373 0 0 5.373 0 12c0 8.25 12 24 12 24s12-15.75 12-24C24 5.373 18.627 0 12 0z" fill="#FF2442" stroke="#fff" stroke-width="1.5"/><circle cx="12" cy="11" r="4.5" fill="#fff" fill-opacity="0.92"/></svg>`;
+
+function discoverMapPinHTML(poi, index) {
+  const isSelected = isDiscoverPinSelected(poi);
+  const pos = poiMapPercent(poi);
+  const hot = isHotPoi(poi);
+  if (isSelected) {
+    return `
+    <div role="button" tabindex="0" class="map-pin discover-pin discover-pin-marker is-selected pin-enter"
+      data-poi-id="${poi.poi_id}"
+      style="left:${pos.x}%;top:${pos.y}%;--float-delay:${(index % 4) * 0.14}s"
+      aria-label="${escapeHTML(poi.name)}，已选中">
+      ${DISCOVER_PIN_MARKER_SVG}
+    </div>`;
+  }
+  return `
+    <div role="button" tabindex="0" class="map-pin discover-pin discover-pin-dot ${hot ? "is-hot" : ""} pin-enter"
+      data-poi-id="${poi.poi_id}"
+      style="left:${pos.x}%;top:${pos.y}%;--float-delay:${(index % 4) * 0.14}s"
+      aria-label="${escapeHTML(poi.name)}">
+      <span class="discover-pin-circle" aria-hidden="true"></span>
+    </div>`;
+}
+
+function discoverAmapPinHTML(poi, index) {
+  const isSelected = isDiscoverPinSelected(poi);
+  const hot = isHotPoi(poi);
+  if (isSelected) {
+    return `
+      <div class="map-pin discover-pin discover-pin-marker is-selected pin-enter"
+           style="cursor:pointer;--float-delay:${(index % 4) * 0.14}s"
+           title="${escapeHTML(poi.name)}">
+        ${DISCOVER_PIN_MARKER_SVG}
+      </div>`;
+  }
+  return `
+    <div class="map-pin discover-pin discover-pin-dot ${hot ? "is-hot" : ""} pin-enter"
+         style="cursor:pointer;--float-delay:${(index % 4) * 0.14}s"
+         title="${escapeHTML(poi.name)}">
+      <span class="discover-pin-circle" aria-hidden="true"></span>
+    </div>`;
+}
+
+function bindDiscoverMapPins(layer, list) {
+  layer.querySelectorAll(".discover-pin[data-poi-id]").forEach((btn) => {
+    const activate = () => {
+      const poi = list.find((p) => p.poi_id === btn.dataset.poiId);
+      if (!poi) return;
+      appState.selectedPOI = poi;
+      appState.mapManualPOI = true;
+      renderMockMapPins();
+      if (amapInstance) renderAmapPins();
+      updateRefMapVisual();
+      updatePOISheet();
+      document.getElementById("poiSheet")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    };
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      activate();
+    });
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        activate();
+      }
+    });
+  });
+}
+
 function renderMockMapPins() {
   const layer = document.getElementById("mockMapPins");
   if (!layer) return;
   const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
   const ranked = rankedMapPois(list);
-  const selectedPoi = appState.mapManualPOI && appState.selectedPOI && list.some((p) => p.poi_id === appState.selectedPOI.poi_id)
-    ? appState.selectedPOI
-    : (appState.selectedPOI && list.some((p) => p.poi_id === appState.selectedPOI.poi_id) ? appState.selectedPOI : ranked[0]);
-  if (selectedPoi && (!appState.selectedPOI || appState.selectedPOI.poi_id !== selectedPoi.poi_id)) {
-    appState.selectedPOI = selectedPoi;
+  const selectedPoi = appState.mapManualPOI ? appState.selectedPOI : null;
+  if (!appState.selectedPOI) {
+    const preferred = ranked[0] || list[0] || null;
+    if (preferred) appState.selectedPOI = preferred;
   }
 
-  const routeHTML = navigationRouteHTML(selectedPoi);
   const isRefDiscover = !!document.getElementById("refDiscoverRoot");
+  const routeHTML = isRefDiscover
+    ? (selectedPoi ? navigationRouteHTML(selectedPoi) : "")
+    : navigationRouteHTML(appState.selectedPOI);
 
   if (isRefDiscover) {
-    const pos = selectedPoi ? poiMapPercent(selectedPoi) : { x: 50, y: 50 };
-    const destHTML = selectedPoi ? `
-      <div class="${TW.refMapDest}" style="left:${pos.x}%;top:${pos.y}%;">
-        <span class="${TW.refMapDestDot}"></span>
-        ${escapeHTML(selectedPoi.name)}
-      </div>
-    ` : "";
-    layer.innerHTML = routeHTML + destHTML;
+    const pinPois = ranked.slice(0, 5);
+    layer.innerHTML = routeHTML + pinPois.map((p, i) => discoverMapPinHTML(p, i)).join("");
+    bindDiscoverMapPins(layer, list);
     updateRefMapFooter();
     updateRefMapHeading();
     return;
@@ -1960,6 +2001,7 @@ function renderMockMapPins() {
       </button>
     `;
   }).join("");
+  const mapSelectedPoi = appState.selectedPOI || ranked[0] || null;
   const expandedPanel = expanded ? `
     <div class="map-expanded-panel">
       <div>
@@ -1971,11 +2013,11 @@ function renderMockMapPins() {
   ` : `
     <div class="map-agent-note">
       <b>${topScore ? `${topScore} 分` : "待计算"}</b>
-      <span>${selectedPoi ? `优先看 ${escapeHTML(selectedPoi.name)}` : "换个范围发现更多"}</span>
+      <span>${mapSelectedPoi ? `优先看 ${escapeHTML(mapSelectedPoi.name)}` : "换个范围发现更多"}</span>
     </div>
   `;
   layer.innerHTML = routeHTML + clusterHTML + visiblePois.map((poi, index) => (
-    mapPoiButtonHTML(poi, index, { matchScore: computeOpportunityScore(poi), dimmed: expanded && poi.poi_id !== selectedPoi?.poi_id })
+    mapPoiButtonHTML(poi, index, { matchScore: computeOpportunityScore(poi), dimmed: expanded && poi.poi_id !== mapSelectedPoi?.poi_id })
   )).join("") + expandedPanel;
 
   layer.querySelectorAll(".map-cluster-pin[data-cluster-id]").forEach((btn) => {
@@ -2112,22 +2154,78 @@ function showPoiNavHint(poi) {
 
 
 function updateMapStats() {
-  const el = document.getElementById("mapStatsBar");
-  if (!el) return;
-  const list = gaodePOIs.length ? gaodePOIs : pois;
-  const totalBuddy = list.reduce((sum, p) => sum + (p.buddy_demand_count || 0), 0);
-  el.innerHTML = `
-    <div class="${TW.statCard}"><b>${totalBuddy}</b><span>人今日想出门</span></div>
-    <div class="${TW.statCard}"><b>${list.length}</b><span>个附近可去的地方</span></div>
-  `;
   updateAreaPill();
 }
 
 function updateSceneNavigator() {
   const el = document.getElementById("filterTabsRow");
   if (!el) return;
-  el.innerHTML = "";
-  el.hidden = true;
+  el.hidden = false;
+  const activeGroupId = activeSceneGroupId();
+  const chips = [
+    { id: "all", label: "全部", filter: "全部" },
+    ...sceneGroups.map((g) => ({ id: g.id, label: g.label, filter: `group:${g.id}` }))
+  ];
+  el.innerHTML = chips.map((chip) => {
+    const isActive = chip.id === "all"
+      ? appState.selectedCategory === "全部"
+      : activeGroupId === chip.id;
+    return `<button type="button" class="${TW.refMapChip} ${isActive ? "is-active" : ""}" data-discover-filter="${chip.filter}">${escapeHTML(chip.label)}</button>`;
+  }).join("");
+  el.querySelectorAll("[data-discover-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      applySceneFilter(btn.dataset.discoverFilter, { expandNav: false });
+      updateSceneNavigator();
+      updateDiscoverRecommend();
+      showToast(`已切换到${btn.textContent.trim()}`);
+    });
+  });
+}
+
+function updateDiscoverRecommend() {
+  const el = document.getElementById("discoverRecommend");
+  if (!el) return;
+  const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory)).slice(0, 4);
+  if (!list.length) {
+    el.innerHTML = "";
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = `
+    <div class="${TW.discoverRecHead}">
+      <h3 class="text-[17px] font-bold text-ink">今晚值得去</h3>
+      <button type="button" class="${TW.linkish}" id="openCircleFromList">换生活圈</button>
+    </div>
+    <div class="${TW.discoverRecList}">
+      ${list.map((p) => {
+        const walkMin = Math.max(3, Math.round(Number(p.distance_km || 0.8) * 12));
+        const active = appState.selectedPOI?.poi_id === p.poi_id;
+        return `
+          <button type="button" class="${TW.discoverRecRow} ${active ? "is-active" : ""}" data-rec-poi="${p.poi_id}">
+            <span class="${TW.discoverRecThumb}" style="background-image:url('${poiCoverImage(p)}')"></span>
+            <span class="${TW.discoverRecBody}">
+              <b>${escapeHTML(p.name)}</b>
+              <small>${escapeHTML(p.sub_category)} · ${walkMin} 分钟 · ${p.buddy_demand_count >= 2 ? `${p.buddy_demand_count} 人组局` : "今晚推荐"}</small>
+            </span>
+            <span class="${TW.discoverRecChev}">›</span>
+          </button>`;
+      }).join("")}
+    </div>`;
+  el.querySelector("#openCircleFromList")?.addEventListener("click", openCirclePage);
+  el.querySelectorAll("[data-rec-poi]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const poi = pois.find((p) => p.poi_id === btn.dataset.recPoi);
+      if (!poi) return;
+      appState.selectedPOI = poi;
+      appState.mapManualPOI = true;
+      renderMockMapPins();
+      updatePOISheet();
+      updateRefMapVisual();
+      updateDiscoverRecommend();
+      updateRefMapHeading();
+    });
+  });
 }
 
 function poiPhotoGradient(poi) {
@@ -2159,71 +2257,30 @@ function updatePOISheet() {
   const poi = appState.selectedPOI;
   const demands = getFakeDemands(poi);
   const visibleDemands = demands.slice(0, 2);
-  const fit = merchantFitSummary(poi);
   const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
-  const dealText = merchantDealShort(poi);
-  const opportunityScore = computeOpportunityScore(poi);
-  const opp = opportunitySummaryForPoi(poi);
-  const reasons = opportunityReasons(poi);
+  const groupLabel = poi.buddy_demand_count >= 2
+    ? `${poi.buddy_demand_count} 人正在组局`
+    : (poi.buddy_demand_count >= 1 ? "正在组局" : "可以发起组局");
   el.innerHTML = `
     <div class="${TW.refPoiHero}" style="background-image:url('${poiCoverImage(poi)}')"></div>
     <div class="${TW.refPoiBody}">
       <div class="${TW.refPoiTitleRow}">
         <h2>${escapeHTML(poi.name)}</h2>
-        <span class="${TW.refPoiOpen}">${escapeHTML(poi.open_status || "营业中")}</span>
       </div>
-      <p class="${TW.refPoiRating}"><b>${poi.rating}</b> ★ · ${escapeHTML(poi.sub_category)} · 人均 ¥${poi.avg_price} · ${poi.distance_km}km</p>
-      <p class="${TW.refPoiStatus}">等待 ${poi.wait_time_min} 分钟 · 步行约 ${walkMin} 分钟 · ${poi.business_hours ? `营业 ${escapeHTML(poi.business_hours)}` : "营业时间待确认"}</p>
+      <p class="${TW.refPoiMeta}">
+        ${escapeHTML(poi.sub_category)} · ${escapeHTML(groupLabel)} · ${walkMin} 分钟可达 · <span class="${TW.refPoiRecommend}">今晚推荐</span>
+      </p>
 
-      <div class="${TW.refPoiMetrics}">
-        <div><b>${poi.rating}</b><span>评分</span></div>
-        <div><b>${poi.wait_time_min} 分钟</b><span>${merchantWaitLabel(poi)}</span></div>
-        <div><b>${walkMin} 分钟</b><span>步行约</span></div>
-        <div><b>${poi.buddy_demand_count} 人</b><span>最近想约</span></div>
-      </div>
-
-      <div class="${TW.refPickCard}">
-        <div class="${TW.refPickTop}">
-          <span class="${TW.refPickBadge}">${opportunityScore} 分机会</span>
-          <span class="${TW.refPickForming}">${opp.formingCount >= 2 ? `${opp.formingCount} 个即将成局` : "随时可加入"}</span>
+      ${visibleDemands.length ? `
+        <div class="${TW.refLiveHead}">
+          <h3 class="text-[15px] font-bold text-ink">正在组局</h3>
         </div>
-        <div class="${TW.refOppGrid}">
-          <div><b>${opp.demandCount}</b><span>人最近想约</span></div>
-          <div><b>${escapeHTML(merchantWaitLabel(poi))}</b><span>等待状态</span></div>
-          <div><b>${opp.waitLabel}</b><span>当前等待</span></div>
-          <div><b>${opp.savedLabel}</b><span>团购优惠</span></div>
-        </div>
-        <ul class="${TW.refOppList}">
-          ${reasons.slice(0, 3).map((r) => `<li>${escapeHTML(r)}</li>`).join("")}
-        </ul>
-        <div class="${TW.refPickTags}">
-          ${fit.chips.slice(0, 3).map((chip) => `<span>${escapeHTML(chip)}</span>`).join("")}
-        </div>
-      </div>
-
-      <div class="${TW.refDealBar}">
-        <span class="${TW.refDealIcon}">团</span>
-        <div>
-          <b>${escapeHTML(dealText)}</b>
-          <small>到店前先看券，预算更好对齐</small>
-        </div>
-        <button type="button" class="${TW.refDealLink}">查看</button>
-      </div>
-
-      <div class="${TW.refLiveHead}">
-        <h3>现在有人想去</h3>
-        <span>此刻</span>
-      </div>
-      ${visibleDemands.length
-        ? visibleDemands.map((d) => refDemandRowHTML(d)).join("")
-        : `<p class="${TW.muted}" style="padding:8px 0;">这个地点暂无等待中的局，可以直接发起一个。</p>`}
+        ${visibleDemands.map((d) => refDemandRowHTML(d)).join("")}
+      ` : ""}
 
       <div class="${TW.refPoiActions}">
-        <button type="button" class="${TW.refBtnPrimary}" id="matchFromPoi">让 Agent 安排</button>
-        <div class="${TW.refBtnRow}">
-          <button type="button" class="${TW.refBtnSecondary}" id="poiJoinBtn">加入这个局</button>
-          <button type="button" class="${TW.refBtnSecondary}" id="poiNavBtn">我也想去</button>
-        </div>
+        <button type="button" class="${TW.refBtnPrimary}" id="poiJoinBtn">加入组局</button>
+        <button type="button" class="${TW.refBtnSecondary}" id="matchFromPoi">快速匹配</button>
       </div>
     </div>
   `;
@@ -2808,7 +2865,7 @@ function renderAgentMemoryCard() {
     <section class="${TW.card} ${TW.agentMemoryCard}">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <div>
-          <p class="${TW.eyebrow}">你的专属 Agent 记忆</p>
+          <p class="${TW.eyebrow}">你的偏好记忆</p>
           <p style="font-size:12px;color:#6b7280;margin-top:2px;">从浏览、收藏、历史成局和反馈中学到</p>
         </div>
         <div class="${TW.agentMemoryDot}"></div>
@@ -2872,26 +2929,26 @@ function applyAgentFeedback(type, match) {
     if (match?.poi?.name && !mem.learned_from.accepted_plans.includes(match.poi.name)) {
       mem.learned_from.accepted_plans.push(match.poi.name);
     }
-    notice = `Agent 已记住：你喜欢这类 ${cat || "场景"}，以后会优先推荐。`;
+    notice = `已记住：你喜欢这类 ${cat || "场景"}，以后会优先推荐。`;
   } else if (type === "too_far") {
     mem.distance_preference_km = Math.max(0.5, mem.distance_preference_km - 0.3);
-    notice = `Agent 已更新：距离偏好缩小至 ${mem.distance_preference_km.toFixed(1)}km，下次会过滤更远的地点。`;
+    notice = `已更新：距离偏好缩小至 ${mem.distance_preference_km.toFixed(1)}km，下次会过滤更远的地点。`;
   } else if (type === "too_noisy") {
     if (!mem.avoid_conditions.includes("多人拼桌局")) mem.avoid_conditions.push("多人拼桌局");
     if (!mem.learned_from.rejected_reasons.includes("太嘈杂")) mem.learned_from.rejected_reasons.push("太嘈杂");
-    notice = "Agent 已记住：你不喜欢嘈杂多人局，以后会优先推荐低打扰 1v1。";
+    notice = "已记住：你不喜欢嘈杂多人局，以后会优先推荐低打扰 1v1。";
   } else if (type === "too_expensive") {
     mem.default_budget_range[1] = Math.max(40, mem.default_budget_range[1] - 10);
     if (!mem.learned_from.rejected_reasons.includes("预算太高")) mem.learned_from.rejected_reasons.push("预算太高");
-    notice = `Agent 已更新：默认预算上限降至 ¥${mem.default_budget_range[1]}，下次会过滤超预算方案。`;
+    notice = `已更新：默认预算上限降至 ¥${mem.default_budget_range[1]}，下次会过滤超预算方案。`;
   } else if (type === "less_like_this") {
     if (cat && !mem.learned_from.rejected_reasons.includes(cat)) mem.learned_from.rejected_reasons.push(cat);
     mem.preferred_scenes = mem.preferred_scenes.filter((s) => s !== cat);
-    notice = `Agent 已记住：减少推荐「${cat || "这类"}」场景，以后会探索其他品类。`;
+    notice = `已记住：减少推荐「${cat || "这类"}」场景，以后会探索其他品类。`;
   }
   appState.agentMemoryNotice = notice;
   appState.agentFeedbackLog.push({ type, cat, timestamp: nowTime() });
-  showToast(notice || "Agent 已更新记忆");
+  showToast(notice || "偏好已更新");
   render();
 }
 
@@ -2904,13 +2961,13 @@ function renderAIPage() {
     <section class="${TW.card} ${TW.aiCard} ${TW.agentConsole}">
       <div class="${TW.agentHead}">
         <div>
-          <p class="${TW.eyebrow}">我的专属 Agent</p>
-          <h2>只说今天的状态，Agent 会结合你的记忆自动完成</h2>
-          <p class="${TW.muted}">你可以直接说状态、预算、距离或想避开的场景。</p>
+          <p class="${TW.eyebrow}">快速匹配</p>
+          <h2>说说今天的状态，系统自动帮你找合适组局</h2>
+          <p class="${TW.muted}">可以直接说状态、预算、距离或想避开的场景。</p>
         </div>
         <div class="${TW.agentStatus} ${appState.aiLoading ? "is-thinking" : appState.matchResults.length ? "is-ready" : ""}">
           <span></span>
-          <b>${appState.aiLoading ? "思考中" : appState.matchResults.length ? "已安排" : "待命"}</b>
+          <b>${appState.aiLoading ? "匹配中" : appState.matchResults.length ? "已匹配" : "待命"}</b>
         </div>
       </div>
       <div class="${TW.agentInputShell}">
@@ -2928,7 +2985,7 @@ function renderAIPage() {
         <button data-prompt="今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。">聚会桌游</button>
       </div>
       <div class="${TW.agentActions}">
-        <button class="${TW.primaryButton} ${TW.wide} ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "Agent 正在安排" : "让 Agent 安排方案"}</button>
+        <button class="${TW.primaryButton} ${TW.wide} ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "正在匹配" : "开始快速匹配"}</button>
         <label class="${TW.agentToggle}">
           <input id="sparseModeToggle" type="checkbox" ${appState.sparseMode ? "checked" : ""} />
           <span>稀疏供给演示</span>
@@ -3068,12 +3125,12 @@ function renderAIDirectorCard() {
     <section class="${TW.card} ${TW.aiState} is-done agent-brief">
       <div class="${TW.analyzingDot}"></div>
       <div>
-        <b>AI Agent 已自动安排</b>
+        <b>已为你找到合适组局</b>
         <p>${escapeHTML(appState.aiDirector.director_brief || layer.summary || "已生成可执行方案。")}</p>
         <div class="${TW.agentBriefGrid}">
           <span><b>${escapeHTML(profile.mood_label || "意图明确")}</b><small>状态</small></span>
-          <span><b>${Math.round((profile.confidence || 0.76) * 100)}%</b><small>理解置信度</small></span>
-          <span><b>${escapeHTML(appState.matchResults[0]?.total_score ? `${appState.matchResults[0].total_score}分` : "已评分")}</b><small>首选方案</small></span>
+          <span><b>${profile.confidence >= 0.75 ? "理解清楚" : "待确认"}</b><small>理解程度</small></span>
+          <span><b>今晚推荐</b><small>首选方案</small></span>
         </div>
         ${profile.activity_strategy ? `<p style="margin-top:8px;font-size:12px;color:#4b5563;">${escapeHTML(profile.activity_strategy)}</p>` : ""}
         ${layer.freshness_label ? `<p style="margin-top:6px;font-size:12px;color:#6b7280;">${escapeHTML(layer.freshness_label)}</p>` : ""}
@@ -3085,7 +3142,7 @@ function renderAIDirectorCard() {
 function renderIntentCard() {
   if (appState.aiLoading) return "";
   if (!appState.parsedIntent) {
-    return `<section class="${TW.card} ${TW.aiState}"><div class="${TW.analyzingDot}"></div><div><b>Agent 正在等待输入</b><p>输入后会同时理解语义、情绪、预算、时间和距离。</p></div></section>`;
+    return `<section class="${TW.card} ${TW.aiState}"><div class="${TW.analyzingDot}"></div><div><b>等待你的描述</b><p>输入后会理解语义、情绪、预算、时间和距离。</p></div></section>`;
   }
   const i = appState.parsedIntent;
   const mood = appState.aiMoodProfile;
@@ -3112,15 +3169,15 @@ function renderIntentCard() {
     <section class="${TW.card} ${TW.aiState} is-done ${TW.agentParseCard}">
       <div class="${TW.analyzingDot}"></div>
       <div style="width:100%;">
-        <b>Agent 理解结果</b>
+        <b>理解结果</b>
         <div class="${TW.intentAnalysisGrid}">
           ${moodLabel ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">当前状态</span><span>${escapeHTML(moodLabel)}</span></div>` : ""}
           ${hardConditions.length ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">硬条件</span><span>${hardConditions.map(escapeHTML).join("、")}</span></div>` : ""}
           ${softPrefs.length ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">软偏好</span><span>${softPrefs.map(escapeHTML).join("、")}</span></div>` : ""}
-          <div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">Agent 判断</span><span>${escapeHTML(agentJudgment)}</span></div>
+          <div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">系统判断</span><span>${escapeHTML(agentJudgment)}</span></div>
         </div>
         <p style="margin-top:8px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
-          ${confidenceLow ? "低置信度待澄清" : "AI 分析完成"}（置信度 ${Math.round((i.parse_confidence || 0.8) * 100)}%）
+          ${confidenceLow ? "还需要一点澄清" : "理解完成"}
         </p>
         ${renderClarifyingQuestions()}
       </div>
@@ -3152,7 +3209,7 @@ function renderAgentClarifyCard() {
   const confidenceLow = (i.parse_confidence || 1) < 0.62;
   if (!confidenceLow && missingSlots.length === 0) return "";
   const agentQ = confidenceLow
-    ? "我可以帮你安排，但再确认一下：你更想放松，还是来点轻运动？"
+    ? "再确认一下：你更想放松，还是来点轻运动？"
     : `差一个判断：${missingSlots.join("或")}大概是什么范围？`;
   const chips = Array.isArray(questions) && questions.length
     ? questions.slice(0, 3).map((q, idx) => `<button class="${TW.clarifyChip}" data-clarify="${idx}">${escapeHTML(q)}</button>`).join("")
@@ -3161,7 +3218,7 @@ function renderAgentClarifyCard() {
       ).join("");
   return `
     <div class="${TW.agentClarifyCard} result-fade">
-      <p class="${TW.agentQ}">Agent：${escapeHTML(agentQ)}</p>
+      <p class="${TW.agentQ}">${escapeHTML(agentQ)}</p>
       <div class="${TW.clarifyChips}">${chips}</div>
     </div>
   `;
@@ -3174,7 +3231,7 @@ function renderPlanCompareTable() {
   const rows = [
     ["搭子", (m) => m.user.nickname],
     ["地点", (m) => m.poi.name],
-    ["匹配度", (m) => `${m.total_score}%`],
+    ["匹配度", (m) => (m.total_score >= 85 ? "很合适" : m.total_score >= 70 ? "合适" : "可尝试")],
     ["人均", (m) => `¥${m.poi.avg_price}`],
     ["等待", (m) => `${m.poi.wait_time_min}min`],
     ["时间", (m) => m.suggested_time]
@@ -3198,10 +3255,10 @@ function renderAIProcess() {
   if (!appState.aiLoading) return "";
   const intent = appState.parsedIntent;
   const steps = [
-    { label: "理解语义和情绪", detail: intent ? `识别到「${intent.activity_type}」，置信度 ${Math.round((intent.parse_confidence || 0.7) * 100)}%` : "分析你的出门需求..." },
-    { label: "排除不合适的商家", detail: `过滤等待超过 20 分钟或超预算的场所` },
-    { label: "计算 AI 成局评分", detail: "综合距离、预算、社交风格、信誉三维匹配" },
-    { label: "生成可执行方案", detail: "按「符合预算 · 距离近 · 已验证」优先排序" }
+    { label: "理解语义和情绪", detail: intent ? `识别到「${intent.activity_type}」` : "分析你的出门需求..." },
+    { label: "排除不合适的商家", detail: "过滤等待过长或超预算的场所" },
+    { label: "计算成局匹配度", detail: "综合距离、预算、社交风格和信誉" },
+    { label: "生成可执行方案", detail: "按符合预算、距离近、已验证优先排序" }
   ];
   return `
     <section class="${TW.card} ${TW.aiSteps}">
@@ -3224,7 +3281,7 @@ function renderMatchResults() {
     return `
       <section class="${TW.card} ${TW.emptyState} result-fade">
         <h2>当前没有完全匹配的搭子</h2>
-        <p>${appState.sparseMode ? "当前供给较低，已进入稀疏兜底。" : "AI 已为你推荐最接近的方案。"}</p>
+        <p>${appState.sparseMode ? "当前供给较低，已进入稀疏兜底。" : "已为你找到最接近的方案。"}</p>
       </section>
       ${appState.sparseMode ? `<section class="${TW.card}" style="margin-top:8px;"><b>兜底建议</b><p style="margin-top:6px;color:#6b7280;">建议放宽时间或预算后重试，或切换到“今晚/周末”以扩大候选池。</p></section>` : ""}
     `;
@@ -3236,7 +3293,7 @@ function renderMatchResults() {
   return `
     <section class="result-section result-fade">
       <div class="${TW.sectionTitle}">
-        <h2>Agent 安排的方案</h2>
+        <h2>为你匹配的方案</h2>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="${TW.textButton}" id="reshuffleResult">换一局</button>
           <button class="${TW.textButton}" id="changeTimeOnly">换一个时间</button>
@@ -3267,7 +3324,7 @@ function renderMatchCard(match, index) {
   const userLikesCat = match.user.preferred_categories && match.user.preferred_categories.includes(match.intent.category_preference);
   const rep = reputationBadge(match.user);
   const director = match.ai_director || {};
-  const planTitle = director.headline || "AI 成局方案";
+  const planTitle = director.headline || "成局方案";
   const planCopy = director.explanation
     ? `${director.explanation}${director.closing_line ? ` ${director.closing_line}` : ""}`
     : `推荐你和 ${match.user.nickname} ${match.suggested_time} 去 ${match.poi.name}。${match.explanation} 备选地点：${match.backup_poi ? match.backup_poi.name : "附近同类商家"}。`;
@@ -3278,14 +3335,14 @@ function renderMatchCard(match, index) {
   return `
     <article class="${TW.matchCard} ${TW.card}">
       <div class="${TW.matchTop}">
-        <div class="${TW.scoreCircle}"><span>AI评分</span>${match.total_score}</div>
+        <div class="${TW.scoreCircle}"><span>${index === 0 ? "今晚推荐" : "备选"}</span></div>
         <div>
           <h3>${match.user.nickname}${match.user.verified_status ? ' <span class="${TW.verifiedBadge}">已验证</span>' : ""}</h3>
           <p>${match.user.social_style} · ¥${match.user.budget_min}–${match.user.budget_max} · ${match.user.distance_km}km · <span class="${TW.repBadge}">信誉 ${rep.score}（${rep.tier}）</span></p>
           <div class="${TW.tagRow}">${match.user.interest_labels.slice(0, 4).map((tag) => `<span>${tag}</span>`).join("")}</div>
         </div>
       </div>
-      <div class="${TW.breakdown}">
+      <div class="${TW.breakdown}" hidden aria-hidden="true">
         ${Object.entries(match.score_breakdown).slice(0, 6).map(([key, value]) => `<div><span>${breakdownLabel(key)}</span><b>${value}</b></div>`).join("")}
       </div>
       <div class="${TW.placeMini}">
@@ -3309,8 +3366,8 @@ function renderMatchCard(match, index) {
           ${director.score_reason ? `<li><b>评分依据</b>：${escapeHTML(director.score_reason)}</li>` : ""}
         </ul>
         ${personalizedReasonLines(match).length ? `
-          <div style="margin-top:8px;padding:8px 10px;background:#fffdf0;border-radius:10px;border:1px solid #ffe88a;">
-            <p style="font-size:11px;font-weight:700;color:#92700a;margin-bottom:4px;">基于你的记忆</p>
+          <div style="margin-top:8px;padding:8px 10px;background:#F5F5F5;border-radius:10px;border:1px solid #EBEBEB;">
+            <p style="font-size:11px;font-weight:700;color:#757575;margin-bottom:4px;">基于你的偏好</p>
             <ul style="margin:0;padding-left:14px;">
               ${personalizedReasonLines(match).map((line) => `<li style="font-size:12px;color:#4b5563;margin-bottom:2px;">${escapeHTML(line)}</li>`).join("")}
             </ul>
@@ -3331,7 +3388,7 @@ function renderMatchCard(match, index) {
         <button class="${TW.textButton}" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
       </div>
       <div class="${TW.feedbackRow}">
-        <span style="font-size:11px;color:#9ca3af;align-self:center;">告诉 Agent：</span>
+        <span style="font-size:11px;color:#9ca3af;align-self:center;">告诉我：</span>
         <button class="${TW.feedbackChip} like" data-agent-feedback="like" data-feedback-plan="${index}">喜欢这个</button>
         <button class="${TW.feedbackChip}" data-agent-feedback="too_far" data-feedback-plan="${index}">太远了</button>
         <button class="${TW.feedbackChip}" data-agent-feedback="too_noisy" data-feedback-plan="${index}">太嘈杂</button>
@@ -3667,8 +3724,8 @@ function renderChatPage() {
       <header class="${TW.chatPageHeader}"><h1>消息</h1></header>
       <section class="${TW.card} ${TW.emptyState}">
         <h2>还没有消息</h2>
-        <p>从地图加入一个局，或让 AI 帮你匹配。</p>
-        <button class="${TW.primaryButton} ${TW.wide}" id="goAI">去 AI 匹配</button>
+        <p>从地图加入一个局，或使用快速匹配。</p>
+        <button class="${TW.primaryButton} ${TW.wide}" id="goAI">去快速匹配</button>
       </section>`;
     $("#goAI").addEventListener("click", () => setPage("ai"));
     return;
@@ -4683,4 +4740,24 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-init();
+function loadAmapSdkIfNeeded() {
+  const key = String(window.AMAP_KEY || "").trim();
+  if (!key) {
+    return Promise.resolve(false);
+  }
+  if ("AMap" in window) {
+    return Promise.resolve(true);
+  }
+  return new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = `https://webapi.amap.com/maps?v=2.0&key=${encodeURIComponent(key)}`;
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      console.warn("[AMap] SDK 加载失败，已降级为示意地图。请检查 AMAP_KEY 与控制台域名白名单。");
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+loadAmapSdkIfNeeded().then(() => init());

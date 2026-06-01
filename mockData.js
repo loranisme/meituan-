@@ -13,8 +13,8 @@ const mockData = (() => {
     ]
   };
 
-  // UCLA/Westwood 中心坐标（GCJ-02，高德地图坐标系）
-  const MAP_CENTER = { lat: 34.0629, lng: -118.4452 };
+  // 美团上海科技中心 · 杨浦滨江南段（GCJ-02，高德地图坐标系）
+  const MAP_CENTER = { lat: 31.252634, lng: 121.549153 };
 
   /** 可切换的生活圈（演示：不同范围/主题筛店） */
   const lifeCircles = [
@@ -193,7 +193,7 @@ const mockData = (() => {
     hot_score,
     x,
     y,
-    // 真实地图坐标：以 UCLA/Westwood 为中心，由 x/y 示意百分比换算（GCJ-02）
+    // 真实地图坐标：以美团上海总部为中心，由 x/y 示意百分比换算（GCJ-02）
     lng: Number((MAP_CENTER.lng + (x - 50) / 50 * 0.022).toFixed(6)),
     lat: Number((MAP_CENTER.lat - (y - 50) / 50 * 0.018).toFixed(6)),
     map_zone: category === "攀岩" || category === "骑行" ? "运动区" : category === "桌游" ? "桌游区" : category === "KTV" || category === "酒吧" ? "文娱区" : "餐饮区",
@@ -794,6 +794,7 @@ const mockData = (() => {
     sceneCatalog,
     sceneIntentSamples,
     MAP_LAYOUT,
+    mapCenter: MAP_CENTER,
     pois,
     users,
     currentUser,

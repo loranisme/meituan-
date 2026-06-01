@@ -494,6 +494,19 @@ class Handler(SimpleHTTPRequestHandler):
         return str(target)
 
     def do_GET(self):
+        if self.path.split("?", 1)[0] == "/runtime-config.js":
+            amap_key = os.environ.get("AMAP_KEY", "").strip()
+            body = (
+                f"window.AMAP_KEY = {json.dumps(amap_key)};\n"
+                f"window.__RUNTIME_CONFIG = {{ amapKeyConfigured: {json.dumps(bool(amap_key))} }};\n"
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         # 美团 POI 真接入占位（Demo 仍用 mockData.js）
         if self.path.split("?", 1)[0] == "/api/meituan-poi":
             json_response(
@@ -544,6 +557,10 @@ def main():
         print(f"AI provider: {provider} (/api/ai-match enabled)")
     else:
         print("Set DEEPSEEK_API_KEY or GEMINI_API_KEY in .env to enable /api/ai-match.")
+    if os.environ.get("AMAP_KEY", "").strip():
+        print("AMap: AMAP_KEY configured (/runtime-config.js)")
+    else:
+        print("AMap: set AMAP_KEY in .env for real map (otherwise fake-map demo)")
     server.serve_forever()
 
 
