@@ -85,6 +85,11 @@ const appState = {
   aiAgentError: "",
   aiLoading: false,
   aiStep: -1,
+  matchAnimPhase: null,
+  matchAnimCandidates: 0,
+  matchPreviewUsers: [],
+  matchResultFilter: "all",
+  matchProfileIndex: null,
   aiHasRun: false,
   pendingSuccess: false,
   toast: "",
@@ -106,7 +111,8 @@ const appState = {
   mapManualPOI: false,
   agentMemory: null,
   agentMemoryNotice: "",
-  agentFeedbackLog: []
+  agentFeedbackLog: [],
+  preferenceDrawerOpen: false
 };
 
 window.appState = appState;
@@ -444,16 +450,26 @@ function render() {
   });
   $$(".nav-item").forEach((item) => {
     const active = item.dataset.page === appState.currentPage || (appState.currentPage === "success" && item.dataset.page === "chat");
+    const isMatchNav = item.dataset.page === "ai";
     item.classList.toggle("text-ink", active);
     item.classList.toggle("text-muted", !active);
-    item.querySelector(".nav-icon")?.classList.toggle("bg-ink", active);
-    item.querySelector(".nav-icon")?.classList.toggle("text-white", active);
-    item.querySelector(".nav-icon")?.classList.toggle("bg-brand", false);
-    item.querySelector(".nav-icon")?.classList.toggle("rounded-xl", active);
-    item.querySelector(".nav-icon")?.classList.toggle("rounded-lg", !active);
+    const icon = item.querySelector(".nav-icon");
+    if (!icon) return;
+    icon.classList.remove("bg-ink", "bg-brand", "text-white", "text-brand-ink", "rounded-xl", "rounded-lg");
+    if (active) {
+      icon.classList.add("rounded-xl");
+      if (isMatchNav) {
+        icon.classList.add("bg-brand", "text-brand-ink");
+      } else {
+        icon.classList.add("bg-ink", "text-white");
+      }
+    } else {
+      icon.classList.add("rounded-lg");
+    }
   });
   updateChatNavBadge();
   document.body.classList.toggle("is-discover-page", appState.currentPage === "map");
+  document.body.classList.toggle("is-match-page", appState.currentPage === "ai");
   if (appState.currentPage === "map") renderMapPage();
   else updateAreaPill();
   renderAIPage();
@@ -461,6 +477,7 @@ function render() {
   renderSuccessPage();
   renderProfilePage();
   renderDepositSheet();
+  renderPreferenceDrawer();
   renderToast();
 }
 
@@ -2498,22 +2515,41 @@ async function runAI() {
   appState.aiHasRun = true;
   appState.parsedIntent = null;
   appState.matchResults = [];
+  appState.matchPreviewUsers = [];
+  appState.matchAnimPhase = "search";
+  appState.matchAnimCandidates = 0;
+  appState.matchProfileIndex = null;
   appState.replanningNotice = "";
   appState.aiDirector = null;
   appState.aiMoodProfile = null;
   appState.aiAgentError = "";
   appState.aiRuleFallback = false;
+  render();
   try {
-    for (let step = 0; step < 4; step += 1) {
-      appState.aiStep = step;
-      render();
-      await sleep(460 + step * 80);
-    }
     appState.aiMoodProfile = analyzeMoodNLP(appState.userInput);
     appState.parsedIntent = applyMoodIntentPatch(parseIntent(appState.userInput), appState.aiMoodProfile, appState.userInput);
+    render();
+    await sleep(420);
+
+    const candidateTargets = [2, 4, 6, 8];
+    for (const count of candidateTargets) {
+      appState.matchAnimCandidates = count;
+      render();
+      await sleep(380);
+    }
+    await sleep(520);
+
     rerunMatching();
+    appState.matchPreviewUsers = appState.matchResults.slice(0, 3);
+    appState.matchAnimPhase = "connect";
+    render();
+    await sleep(2400);
+
     const { availablePOIs } = getMatchSupply();
     await enrichWithAIDirector(availablePOIs);
+    appState.matchAnimPhase = "done";
+    render();
+    await sleep(480);
     if (!appState.matchResults.length) {
       showToast("暂无匹配结果，试试放宽预算或换场景");
     }
@@ -2530,6 +2566,9 @@ async function runAI() {
   } finally {
     appState.aiLoading = false;
     appState.aiStep = -1;
+    appState.matchAnimPhase = null;
+    appState.matchAnimCandidates = 0;
+    appState.matchPreviewUsers = [];
     render();
   }
 }
@@ -2849,45 +2888,450 @@ async function appendGCPeerReply(gc, messageText) {
   render();
 }
 
-function renderAgentMemoryCard() {
+const MATCH_INSPIRE_PROMPTS = [
+  { label: "喝咖啡", prompt: "周末想找安静的人一起喝咖啡学习，预算 40 元以内。" },
+  { label: "桌游", prompt: "今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。" },
+  { label: "KTV", prompt: "今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。" },
+  { label: "city walk", prompt: "今天想 city walk，找个人一起散步聊天，预算 50 元以内。" },
+  { label: "运动", prompt: "压力有点大，想找个新手友好的攀岩搭子，预算 120 元以内。" }
+];
+
+function matchTagIcon(type) {
+  const icons = {
+    food: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 3v8a4 4 0 008 0V3M14 3v8a4 4 0 008 0V3M6 11v10M14 11v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    coin: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    people: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="9" cy="7" r="3" stroke="currentColor" stroke-width="2"/><path d="M3 20v-1a5 5 0 015-5h2a5 5 0 015 5v1M16 11a3 3 0 100-6M21 20v-1a4 4 0 00-3-3.87" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    smile: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    pin: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 21s7-4.5 7-11a7 7 0 10-14 0c0 6.5 7 11 7 11z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="2.5" stroke="currentColor" stroke-width="2"/></svg>',
+    wallet: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2" stroke="currentColor" stroke-width="2"/><path d="M3 10h18M16 14h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    block: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M5 5l14 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    tag: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 12l-8 8-4-4V8h8l4 4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="9" cy="9" r="1.5" fill="currentColor"/></svg>'
+  };
+  return icons[type] || icons.smile;
+}
+
+function buildAITags() {
+  const intent = appState.parsedIntent || (appState.userInput.trim() && parseIntent ? parseIntent(appState.userInput) : null);
+  const mem = appState.agentMemory;
+  const tags = [];
+  if (intent) {
+    const category = intent.category_preference;
+    if (category && category !== "餐饮") {
+      tags.push({ label: category, tone: "orange", icon: "food" });
+    } else if (/韩餐|饭/.test(appState.userInput)) {
+      tags.push({ label: "韩餐", tone: "orange", icon: "food" });
+    }
+    if (intent.budget_max) tags.push({ label: `${intent.budget_max}元以内`, tone: "yellow", icon: "coin" });
+    if (intent.group_size) tags.push({ label: intent.group_size, tone: "blue", icon: "people" });
+    const social = intent.social_style === "轻松聊天" ? "轻社交" : intent.social_style;
+    tags.push({ label: social, tone: "sand", icon: "smile" });
+  } else if (mem) {
+    tags.push({ label: mem.preferred_scenes.slice(0, 2).join(" · ") || "韩餐", tone: "orange", icon: "food" });
+    tags.push({ label: `${mem.default_budget_range[1]}元以内`, tone: "yellow", icon: "coin" });
+    tags.push({ label: "1v1", tone: "blue", icon: "people" });
+    tags.push({ label: "轻社交", tone: "sand", icon: "smile" });
+  }
+  return tags.slice(0, 4);
+}
+
+function matchGreetingTime() {
+  const hour = new Date().getHours();
+  if (hour < 6) return "夜深了";
+  if (hour < 12) return "早上好";
+  if (hour < 18) return "下午好";
+  return "晚上好";
+}
+
+function userDisplayMeta(user) {
+  const seed = String(user.user_id || "").split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  const jobs = ["设计师", "产品经理", "程序员", "学生", "自由职业", "运营", "教师"];
+  return {
+    age: 22 + (seed % 9),
+    job: jobs[seed % jobs.length]
+  };
+}
+
+function userAvatarUrl(user) {
+  return user.avatar_url || `https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(user.user_id || user.nickname || "buddy")}`;
+}
+
+function userBioSnippet(match) {
+  const labels = match.user.interest_labels?.slice(0, 3).join(" · ") || match.user.social_style;
+  return match.explanation || `喜欢${labels}，${match.user.social_style}，期待一起出门。`;
+}
+
+function filteredMatchResults() {
+  const list = [...appState.matchResults];
+  if (appState.matchResultFilter === "high") {
+    return list.filter((item) => item.total_score >= 85);
+  }
+  if (appState.matchResultFilter === "nearby") {
+    return list.filter((item) => Number(item.user.distance_km) <= 1.5);
+  }
+  if (appState.matchResultFilter === "newest") {
+    return list.sort((a, b) => String(b.user.user_id).localeCompare(String(a.user.user_id)));
+  }
+  return list;
+}
+
+function renderMatchRadarDots() {
+  const dots = [
+    { x: 18, y: 28, delay: 0 },
+    { x: 72, y: 22, delay: 0.4 },
+    { x: 82, y: 58, delay: 0.8 },
+    { x: 24, y: 68, delay: 1.1 },
+    { x: 52, y: 14, delay: 0.2 },
+    { x: 64, y: 78, delay: 1.4 },
+    { x: 36, y: 46, delay: 0.6 }
+  ];
+  return dots.map((dot, index) => `
+    <span class="match-radar-dot" style="left:${dot.x}%;top:${dot.y}%;animation-delay:${dot.delay}s" aria-hidden="true"></span>
+  `).join("");
+}
+
+function renderMatchAnimationOverlay() {
+  if (!appState.aiLoading || !appState.matchAnimPhase) return "";
+  const phase = appState.matchAnimPhase;
+  const preview = appState.matchPreviewUsers.length
+    ? appState.matchPreviewUsers
+    : appState.matchResults.slice(0, 3);
+  const connectNodes = (preview.length ? preview : [{ user: { nickname: "?", avatar_url: "" }, total_score: 90 }, { user: { nickname: "?", avatar_url: "" }, total_score: 87 }, { user: { nickname: "?", avatar_url: "" }, total_score: 84 }]).slice(0, 3);
+  const nodeSlots = [
+    { cls: "node-top", scoreCls: "score-top" },
+    { cls: "node-left", scoreCls: "score-left" },
+    { cls: "node-right", scoreCls: "score-right" }
+  ];
+  return `
+    <div class="match-anim-overlay" role="status" aria-live="polite">
+      <div class="match-anim-panel">
+        <div class="match-anim-phase match-anim-search ${phase === "search" ? "is-active" : ""}">
+          <h2 class="match-anim-title">正在寻找同频的人</h2>
+          <p class="match-anim-sub">已理解你的需求...</p>
+          <div class="match-radar" aria-hidden="true">
+            <div class="match-radar-core"></div>
+            <div class="match-radar-ring ring-1"></div>
+            <div class="match-radar-ring ring-2"></div>
+            <div class="match-radar-ring ring-3"></div>
+            ${renderMatchRadarDots()}
+          </div>
+          <p class="match-anim-footer">发现 ${appState.matchAnimCandidates} 个候选结果...</p>
+        </div>
+
+        <div class="match-anim-phase match-anim-connect ${phase === "connect" || phase === "done" ? "is-active" : ""}">
+          <h2 class="match-anim-title">正在为你建立连接</h2>
+          <p class="match-anim-sub">匹配度越高，越合拍哦</p>
+          <div class="match-connect-stage" aria-hidden="true">
+            <svg class="match-connect-lines" viewBox="0 0 240 200" preserveAspectRatio="xMidYMid meet">
+              <line class="match-connect-line line-a" x1="120" y1="100" x2="120" y2="34"/>
+              <line class="match-connect-line line-b" x1="120" y1="100" x2="44" y2="156"/>
+              <line class="match-connect-line line-c" x1="120" y1="100" x2="196" y2="156"/>
+            </svg>
+            <div class="match-connect-hub"></div>
+            ${connectNodes.map((match, index) => {
+              const slot = nodeSlots[index];
+              return `
+                <div class="match-connect-node ${slot.cls}">
+                  <div class="match-connect-avatar">
+                    <img src="${userAvatarUrl(match.user)}" alt="" loading="lazy"/>
+                  </div>
+                  <span class="match-connect-score ${slot.scoreCls}">${match.total_score}%</span>
+                </div>
+              `;
+            }).join("")}
+          </div>
+          <p class="match-anim-footer">${phase === "done" ? "即将为你展示结果..." : "正在计算最佳组合..."}</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMatchFilterBar() {
+  const filters = [
+    { id: "all", label: "全部" },
+    { id: "high", label: "高匹配" },
+    { id: "nearby", label: "附近" },
+    { id: "newest", label: "最新" }
+  ];
+  return `
+    <div class="match-filter-bar">
+      ${filters.map((filter) => `
+        <button type="button" class="match-filter-chip ${appState.matchResultFilter === filter.id ? "is-active" : ""}" data-match-filter="${filter.id}">
+          ${filter.label}
+        </button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMatchPeopleCard(match, index) {
+  const meta = userDisplayMeta(match.user);
+  const originalIndex = appState.matchResults.indexOf(match);
+  return `
+    <button type="button" class="match-people-card" data-open-profile="${originalIndex >= 0 ? originalIndex : index}">
+      <img class="match-people-avatar" src="${userAvatarUrl(match.user)}" alt="" loading="lazy"/>
+      <div class="match-people-body">
+        <div class="match-people-head">
+          <span class="match-people-name">${escapeHTML(match.user.nickname)}</span>
+          <span class="match-people-score">${match.total_score}% 匹配</span>
+        </div>
+        <p class="match-people-meta">${meta.age}岁 · ${match.user.distance_km}km · ${escapeHTML(meta.job)}</p>
+        <div class="match-people-tags">
+          ${match.user.interest_labels.slice(0, 3).map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}
+        </div>
+        <p class="match-people-bio">${escapeHTML(userBioSnippet(match))}</p>
+      </div>
+    </button>
+  `;
+}
+
+function renderMatchPeopleList() {
+  if (!appState.matchResults.length) return "";
+  const results = filteredMatchResults();
+  return `
+    <section class="match-people-section result-fade">
+      <div class="match-people-header">
+        <h2>找到 ${appState.matchResults.length} 位同频的人</h2>
+        ${renderMatchFilterBar()}
+      </div>
+      ${results.length ? `
+        <div class="match-people-list">
+          ${results.map((match, index) => renderMatchPeopleCard(match, index)).join("")}
+        </div>
+      ` : `
+        <div class="${TW.emptyState}" style="padding:20px;text-align:center;">
+          <p style="color:#6b7280;font-size:13px;">当前筛选下暂无结果，试试其他标签。</p>
+        </div>
+      `}
+    </section>
+  `;
+}
+
+function renderMatchProfileSheet() {
+  if (appState.matchProfileIndex == null) return "";
+  const match = appState.matchResults[appState.matchProfileIndex];
+  if (!match) return "";
+  const meta = userDisplayMeta(match.user);
+  const intentTags = [
+    match.intent?.category_preference,
+    match.intent?.budget_max ? `${match.intent.budget_max}元以内` : null,
+    match.intent?.group_size,
+    match.intent?.social_style === "轻松聊天" ? "轻社交" : match.intent?.social_style
+  ].filter(Boolean);
+  const places = [match.poi, match.backup_poi].filter(Boolean).slice(0, 2);
+  return `
+    <div class="modal-overlay match-profile-overlay" id="matchProfileOverlay">
+      <div class="match-profile-sheet">
+        <button type="button" class="match-profile-close" id="closeMatchProfile" aria-label="关闭">×</button>
+        <div class="match-profile-hero">
+          <img src="${userAvatarUrl(match.user)}" alt="" loading="lazy"/>
+        </div>
+        <div class="match-profile-content">
+          <div class="match-profile-head">
+            <h2>${escapeHTML(match.user.nickname)}</h2>
+            <span class="match-profile-score">${match.total_score}% 匹配</span>
+          </div>
+          <p class="match-profile-meta">${meta.age}岁 · ${match.user.distance_km}km · ${escapeHTML(meta.job)}</p>
+          <div class="match-profile-block">
+            <h3>关于我</h3>
+            <p>${escapeHTML(userBioSnippet(match))}</p>
+          </div>
+          <div class="match-profile-block">
+            <h3>我在找</h3>
+            <div class="match-profile-tags">
+              ${intentTags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}
+            </div>
+          </div>
+          ${places.length ? `
+            <div class="match-profile-block">
+              <h3>常去地点</h3>
+              <div class="match-profile-places">
+                ${places.map((poi) => `
+                  <div class="match-profile-place">
+                    <div class="match-profile-place-cover" style="background-image:url('${poiCoverImage(poi)}')"></div>
+                    <b>${escapeHTML(poi.name)}</b>
+                    <span>${escapeHTML(poi.sub_category || poi.category)} · ${poi.distance_km}km</span>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          ` : ""}
+        </div>
+        <div class="match-profile-footer">
+          <button type="button" class="match-profile-sayhi" id="matchProfileSayHi">打个招呼</button>
+          <button type="button" class="match-profile-msg" id="matchProfileInvite" aria-label="查看方案">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 15a4 4 0 01-4 4H7l-4 3V7a4 4 0 014-4h10a4 4 0 014 4v8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindMatchPeopleEvents() {
+  $$("#aiPage [data-match-filter]").forEach((button) => {
+    button.addEventListener("click", () => {
+      appState.matchResultFilter = button.dataset.matchFilter;
+      render();
+    });
+  });
+  $$("#aiPage [data-open-profile]").forEach((button) => {
+    button.addEventListener("click", () => {
+      appState.matchProfileIndex = Number(button.dataset.openProfile);
+      render();
+    });
+  });
+  $("#closeMatchProfile")?.addEventListener("click", () => {
+    appState.matchProfileIndex = null;
+    render();
+  });
+  $("#matchProfileOverlay")?.addEventListener("click", (event) => {
+    if (event.target.id === "matchProfileOverlay") {
+      appState.matchProfileIndex = null;
+      render();
+    }
+  });
+  $("#matchProfileSayHi")?.addEventListener("click", () => {
+    const match = appState.matchResults[appState.matchProfileIndex];
+    if (!match) return;
+    appState.matchProfileIndex = null;
+    selectMatch(match);
+  });
+  $("#matchProfileInvite")?.addEventListener("click", () => {
+    const match = appState.matchResults[appState.matchProfileIndex];
+    if (!match) return;
+    showGroupInviteModal(match);
+  });
+}
+
+function renderAITagPills() {
+  const tags = buildAITags();
+  if (!tags.length) return "";
+  return `
+    <div class="match-ai-tags">
+      <p class="match-ai-tags-label">✨ AI 理解为</p>
+      <div class="match-tag-row">
+        ${tags.map((tag) => `
+          <span class="match-tag match-tag--${tag.tone}">
+            ${matchTagIcon(tag.icon)}
+            ${escapeHTML(tag.label)}
+          </span>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderRecentPreferencesCard() {
   const mem = appState.agentMemory;
   if (!mem) return "";
   const notice = appState.agentMemoryNotice;
+  const socialText = mem.social_preference.includes("1v1")
+    ? "1v1 · 轻社交 · 放松"
+    : `${mem.social_preference} · 轻社交 · 放松`;
   const rows = [
-    ["常去场景", mem.preferred_scenes.join(" / ")],
-    ["默认预算", `¥${mem.default_budget_range[0]}–${mem.default_budget_range[1]}`],
-    ["距离偏好", `${mem.distance_preference_km}km 内`],
-    ["社交偏好", mem.social_preference],
-    ["避开条件", mem.avoid_conditions.join("、")],
-    ["团购偏好", mem.deal_preference]
+    { icon: "food", bg: "#FFF4ED", color: "#FF6B35", text: mem.preferred_scenes.slice(0, 2).join(" · ") },
+    { icon: "coin", bg: "#FFF8E1", color: "#E6B000", text: `${mem.default_budget_range[0]}-${mem.default_budget_range[1]}元` },
+    { icon: "pin", bg: "#ECFDF5", color: "#22A06B", text: `${mem.distance_preference_km}km 内` },
+    { icon: "people", bg: "#EFF5FF", color: "#2F7EF7", text: socialText }
   ];
   return `
-    <section class="${TW.card} ${TW.agentMemoryCard}">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-        <div>
-          <p class="${TW.eyebrow}">你的偏好记忆</p>
-          <p style="font-size:12px;color:#6b7280;margin-top:2px;">从浏览、收藏、历史成局和反馈中学到</p>
-        </div>
-        <div class="${TW.agentMemoryDot}"></div>
+    <section class="match-pref-card">
+      <div class="match-pref-head">
+        <h3>最近偏好</h3>
+        <span class="match-pref-status"><span class="match-pref-status-dot"></span>已生效</span>
       </div>
-      <div class="${TW.agentMemoryGrid}">
-        ${rows.map(([label, val]) => `
-          <div class="${TW.agentMemoryRow}">
-            <span class="${TW.agentMemoryLabel}">${label}</span>
-            <span class="${TW.agentMemoryVal}">${escapeHTML(val)}</span>
+      ${rows.map((row) => `
+        <div class="match-pref-row">
+          <span class="match-pref-icon" style="background:${row.bg};color:${row.color}">${matchTagIcon(row.icon)}</span>
+          <span>${escapeHTML(row.text)}</span>
+        </div>
+      `).join("")}
+      <button type="button" class="match-pref-more" id="openPreferenceDrawer">查看更多偏好 ›</button>
+      ${notice ? `<div class="${TW.agentMemoryNotice} result-fade" style="margin-top:10px;">${escapeHTML(notice)}</div>` : ""}
+    </section>
+  `;
+}
+
+function renderPreferenceDrawer() {
+  let overlay = document.getElementById("preferenceDrawerOverlay");
+  if (!appState.preferenceDrawerOpen) {
+    overlay?.remove();
+    return;
+  }
+  const mem = appState.agentMemory;
+  if (!mem) return;
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "preferenceDrawerOverlay";
+    overlay.className = "modal-overlay";
+    document.body.appendChild(overlay);
+  }
+  const detailRows = [
+    { icon: "food", bg: "#F5F0FF", color: "#8B5CF6", label: "常去场景", val: mem.preferred_scenes.join(" / ") },
+    { icon: "wallet", bg: "#FFF8E1", color: "#E6B000", label: "默认预算", val: `¥${mem.default_budget_range[0]}-${mem.default_budget_range[1]}` },
+    { icon: "pin", bg: "#ECFDF5", color: "#22A06B", label: "距离偏好", val: `${mem.distance_preference_km}km 内` },
+    { icon: "people", bg: "#EFF5FF", color: "#2F7EF7", label: "社交偏好", val: mem.social_preference },
+    { icon: "block", bg: "#FFF0F3", color: "#FF2442", label: "避开条件", val: mem.avoid_conditions.join("、") },
+    { icon: "tag", bg: "#FFF0F5", color: "#EC4899", label: "团购偏好", val: mem.deal_preference }
+  ];
+  const historyItems = [
+    ...(mem.learned_from.accepted_plans || []).map((name) => ({ text: name, badge: "常去", tone: "freq" })),
+    ...(mem.learned_from.rejected_reasons || []).map((reason) => ({ text: reason, badge: "不喜欢", tone: "dislike" }))
+  ];
+  overlay.innerHTML = `
+    <div class="pref-drawer-sheet" role="dialog" aria-label="偏好详情">
+      <div class="pref-drawer-handle" aria-hidden="true"></div>
+      <div class="pref-drawer-head">
+        <div>
+          <h2>你的偏好详情</h2>
+          <p>基于你的历史行为和反馈</p>
+        </div>
+        <span class="match-pref-status"><span class="match-pref-status-dot"></span>已生效</span>
+      </div>
+      <div class="pref-detail-card">
+        ${detailRows.map((row) => `
+          <div class="pref-detail-row">
+            <span class="pref-detail-icon" style="background:${row.bg};color:${row.color}">${matchTagIcon(row.icon)}</span>
+            <div class="pref-detail-body">
+              <p class="pref-detail-label">${escapeHTML(row.label)}</p>
+              <p class="pref-detail-val">${escapeHTML(row.val)}</p>
+            </div>
           </div>
         `).join("")}
       </div>
-      <div style="margin-top:10px;">
-        <p style="font-size:11px;color:#9ca3af;margin-bottom:6px;">来自历史行为</p>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-          ${(mem.learned_from.accepted_plans || []).map((p) => `<span class="${TW.memoryChip} accepted">${escapeHTML(p)}</span>`).join("")}
-          ${(mem.learned_from.rejected_reasons || []).map((r) => `<span class="${TW.memoryChip} rejected">✗ ${escapeHTML(r)}</span>`).join("")}
+      <div class="pref-history">
+        <h3>来自历史行为</h3>
+        <div class="pref-detail-card" style="padding:4px 16px;">
+          ${historyItems.map((item) => `
+            <div class="pref-history-row">
+              <span>${escapeHTML(item.text)}</span>
+              <span class="pref-history-badge pref-history-badge--${item.tone}">${escapeHTML(item.badge)}</span>
+            </div>
+          `).join("")}
         </div>
       </div>
-      ${notice ? `<div class="${TW.agentMemoryNotice} result-fade">${escapeHTML(notice)}</div>` : ""}
-    </section>
+      <button type="button" class="pref-manage-btn" id="closePreferenceDrawer">
+        管理我的偏好
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
   `;
+  overlay.onclick = (event) => {
+    if (event.target === overlay) {
+      appState.preferenceDrawerOpen = false;
+      render();
+    }
+  };
+  overlay.querySelector("#closePreferenceDrawer")?.addEventListener("click", () => {
+    appState.preferenceDrawerOpen = false;
+    showToast("偏好管理即将上线");
+    render();
+  });
+}
+
+function renderAgentMemoryCard() {
+  return renderRecentPreferencesCard();
 }
 
 function personalizedReasonLines(match) {
@@ -2953,60 +3397,62 @@ function applyAgentFeedback(type, match) {
 }
 
 function renderAIPage() {
-  const mood = appState.aiMoodProfile;
-  const moodSignals = mood
-    ? [mood.mood_label, mood.energy ? `${mood.energy}能量` : "", mood.social_style, mood.recommended_category || mood.activity_strategy].filter(Boolean)
-    : ["自然语言", "情绪理解", "自动成局"];
   $("#aiPage").innerHTML = `
-    <section class="${TW.card} ${TW.aiCard} ${TW.agentConsole}">
-      <div class="${TW.agentHead}">
-        <div>
-          <p class="${TW.eyebrow}">快速匹配</p>
-          <h2>说说今天的状态，系统自动帮你找合适组局</h2>
-          <p class="${TW.muted}">可以直接说状态、预算、距离或想避开的场景。</p>
+    <div class="match-page ${appState.aiLoading ? "is-animating" : ""}">
+      <div class="match-greeting">
+        <p class="match-greeting-time">${matchGreetingTime()} 👋</p>
+        <h1 class="match-greeting-title">今天想做什么？</h1>
+      </div>
+
+      <div class="match-input-wrap">
+        <span class="match-input-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <textarea id="intentInput" aria-label="输入你的状态或想法" placeholder="输入你的状态或想法...">${escapeHTML(appState.userInput)}</textarea>
+        <span class="match-input-ai" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3zM5 19l1 3 1-3 3-1-3-1-1-3-1 3-3 1 3 1zM19 13l.8 2.2L22 16l-2.2.8L19 19l-.8-2.2L16 16l2.2-.8L19 13z" fill="currentColor"/></svg>
+        </span>
+      </div>
+
+      ${renderAITagPills()}
+
+      <button type="button" class="match-start-btn ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>
+        ${appState.aiLoading ? "正在匹配" : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.5"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>开始匹配`}
+      </button>
+      <p class="match-btn-caption">系统将为你找到合适的主局和同频的人</p>
+
+      ${renderRecentPreferencesCard()}
+
+      <section class="match-inspire">
+        <h3>灵感推荐</h3>
+        <div class="match-inspire-scroll">
+          ${MATCH_INSPIRE_PROMPTS.map((item) => `
+            <button type="button" class="match-inspire-chip" data-prompt="${escapeHTML(item.prompt)}">${escapeHTML(item.label)}</button>
+          `).join("")}
         </div>
-        <div class="${TW.agentStatus} ${appState.aiLoading ? "is-thinking" : appState.matchResults.length ? "is-ready" : ""}">
-          <span></span>
-          <b>${appState.aiLoading ? "匹配中" : appState.matchResults.length ? "已匹配" : "待命"}</b>
-        </div>
+      </section>
+
+      <div class="match-results-block">
+        ${renderMatchPeopleList()}
+        ${renderAIDirectorCard()}
+        ${renderIntentCard()}
+        ${renderMatchResults()}
       </div>
-      <div class="${TW.agentInputShell}">
-        <textarea id="intentInput" aria-label="告诉 AI 你的出门需求">${escapeHTML(appState.userInput)}</textarea>
-        <div class="${TW.agentSignalRow}">
-          ${moodSignals.slice(0, 4).map((signal) => `<span>${escapeHTML(signal)}</span>`).join("")}
-        </div>
-      </div>
-      <div class="prompt-row ${TW.agentPrompts}">
-        <button data-prompt="今天心情不好，想找个人安静坐会儿，离我近一点，预算 50 以内。">心情不好</button>
-        <button data-prompt="今晚想找一个人吃韩餐，预算 80 元以内，不想太尴尬，最好轻松聊聊，离我不要太远。">韩餐 1v1</button>
-        <button data-prompt="压力有点大，想找个新手友好的攀岩搭子，预算 120 元以内。">释放压力</button>
-        <button data-prompt="周末想找安静的人一起喝咖啡学习，预算 40 元以内。">咖啡学习</button>
-        <button data-prompt="今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。">KTV 多人</button>
-        <button data-prompt="今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。">聚会桌游</button>
-      </div>
-      <div class="${TW.agentActions}">
-        <button class="${TW.primaryButton} ${TW.wide} ${appState.aiLoading ? "is-loading" : ""}" id="runAIButton" ${appState.aiLoading ? "disabled" : ""}>${appState.aiLoading ? "正在匹配" : "开始快速匹配"}</button>
-        <label class="${TW.agentToggle}">
-          <input id="sparseModeToggle" type="checkbox" ${appState.sparseMode ? "checked" : ""} />
-          <span>稀疏供给演示</span>
-        </label>
-      </div>
-    </section>
-    ${renderAgentMemoryCard()}
-    ${renderAIProcess()}
-    ${renderAIDirectorCard()}
-    ${renderIntentCard()}
-    ${renderMatchResults()}
+    </div>
+    ${renderMatchAnimationOverlay()}
+    ${renderMatchProfileSheet()}
   `;
-  $("#intentInput").addEventListener("input", (event) => { appState.userInput = event.target.value; });
+  $("#intentInput").addEventListener("input", (event) => {
+    appState.userInput = event.target.value;
+    appState.parsedIntent = null;
+    const tagHost = $("#aiPage .match-ai-tags");
+    if (tagHost) tagHost.outerHTML = renderAITagPills();
+  });
   $("#runAIButton").addEventListener("click", runAI);
-  const sparseModeToggle = $("#sparseModeToggle");
-  if (sparseModeToggle) {
-    sparseModeToggle.addEventListener("change", (event) => {
-      appState.sparseMode = event.target.checked;
-      showToast(appState.sparseMode ? "已开启稀疏供给演示" : "已关闭稀疏供给演示");
-    });
-  }
+  $("#openPreferenceDrawer")?.addEventListener("click", () => {
+    appState.preferenceDrawerOpen = true;
+    render();
+  });
   $$("#aiPage [data-prompt]").forEach((button) => {
     button.addEventListener("click", () => {
       appState.userInput = button.dataset.prompt;
@@ -3063,6 +3509,7 @@ function renderAIPage() {
       applyAgentFeedback(type, appState.matchResults[planIndex]);
     });
   });
+  bindMatchPeopleEvents();
 }
 
 function applyPlanAdjust(planIndex, patch) {
@@ -3251,30 +3698,6 @@ function renderPlanCompareTable() {
   `;
 }
 
-function renderAIProcess() {
-  if (!appState.aiLoading) return "";
-  const intent = appState.parsedIntent;
-  const steps = [
-    { label: "理解语义和情绪", detail: intent ? `识别到「${intent.activity_type}」` : "分析你的出门需求..." },
-    { label: "排除不合适的商家", detail: "过滤等待过长或超预算的场所" },
-    { label: "计算成局匹配度", detail: "综合距离、预算、社交风格和信誉" },
-    { label: "生成可执行方案", detail: "按符合预算、距离近、已验证优先排序" }
-  ];
-  return `
-    <section class="${TW.card} ${TW.aiSteps}">
-      ${steps.map((step, index) => `
-        <div class="${TW.aiStep} ${index < appState.aiStep ? "is-done" : ""} ${index === appState.aiStep ? "is-active" : ""}">
-          <span>${index + 1}</span>
-          <div>
-            <p style="font-weight:600;">${step.label}</p>
-            ${index <= appState.aiStep ? `<p style="font-size:12px;color:#6b7280;margin-top:2px;">${step.detail}</p>` : ""}
-          </div>
-        </div>
-      `).join("")}
-    </section>
-  `;
-}
-
 function renderMatchResults() {
   if (appState.aiLoading) return "";
   if (!appState.matchResults.length && appState.aiHasRun) {
@@ -3293,7 +3716,7 @@ function renderMatchResults() {
   return `
     <section class="result-section result-fade">
       <div class="${TW.sectionTitle}">
-        <h2>为你匹配的方案</h2>
+        <h2>推荐成局方案</h2>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           <button class="${TW.textButton}" id="reshuffleResult">换一局</button>
           <button class="${TW.textButton}" id="changeTimeOnly">换一个时间</button>
@@ -3395,7 +3818,7 @@ function renderMatchCard(match, index) {
         <button class="${TW.feedbackChip}" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
         <button class="${TW.feedbackChip}" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
       </div>
-      <button class="${TW.primaryButton} ${TW.wide}" data-invite-match="${index}" style="margin-top:4px;">发出邀约</button>
+      <button class="${TW.primaryButton} ${TW.wide}" data-invite-match="${index}" data-select-match="${index}" style="margin-top:4px;">发出邀约</button>
     </article>
   `;
 }

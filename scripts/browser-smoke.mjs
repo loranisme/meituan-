@@ -34,13 +34,15 @@ async function main() {
   await page.waitForFunction(
     () => window.appState && !window.appState.aiLoading && window.appState.matchResults.length > 0,
     null,
-    { timeout: 25000 }
+    { timeout: 35000 }
   );
 
   const matchCount = await page.evaluate(() => window.appState.matchResults.length);
   if (!matchCount) throw new Error("no match results after runAI");
 
-  await page.click("[data-select-match='0']");
+  await page.click(".match-people-card");
+  await page.waitForSelector("#matchProfileSayHi", { timeout: 8000 });
+  await page.click("#matchProfileSayHi");
   await page.waitForFunction(() => window.appState.currentPage === "chat", null, { timeout: 8000 });
 
   await page.click("#simulateReject");
