@@ -52,7 +52,7 @@
         h3 { @apply text-[17px] font-bold leading-snug; }
       }
     </style>
-    <link rel="stylesheet" href="./map.css" />
+    <link rel="stylesheet" href="./map.css?v=20260605n" />
   </head>
   <body>
     <main class="mx-auto min-h-screen bg-wash w-full max-w-[430px] pb-[18px]">
@@ -73,7 +73,6 @@
             <button type="button" class="header-bell w-9 h-9 border-0 rounded-full bg-white text-[#666] place-items-center cursor-pointer" id="headerBell" aria-label="通知">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button type="button" class="text-xs font-semibold text-muted bg-white border border-line rounded-full px-3 py-1.5 header-action" id="resetDemo" aria-label="重置演示">重置</button>
           </div>
         </div>
       </header>
@@ -89,27 +88,32 @@
 
     <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 h-[58px] bg-white border-t border-line grid grid-cols-4 z-20 w-full max-w-[430px] pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_20px_rgba(0,0,0,0.04)]" aria-label="主导航">
       <button class="nav-item bg-transparent text-ink text-[10px] font-semibold flex flex-col items-center justify-center gap-0.5 pt-1" data-page="map" type="button">
-        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-xl bg-ink text-white transition-colors" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-xl bg-ink text-white transition-colors" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><path d="M15.5 8.5l-2.1 5.1-5.1 2.1 2.1-5.1 5.1-2.1z" fill="currentColor"/></svg>
         <span>发现</span>
       </button>
       <button class="nav-item bg-transparent text-muted text-[10px] font-semibold flex flex-col items-center justify-center gap-0.5 pt-1" data-page="ai" type="button">
-        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-lg transition-colors" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 00-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1114.5 9 2.5 2.5 0 0112 11.5zM5 20v2h14v-2H5z"/></svg>
+        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-lg transition-colors" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M13 2L5 13h6l-2 9 9-12h-6l1-8z" fill="currentColor"/></svg>
         <span>匹配</span>
       </button>
       <button class="nav-item bg-transparent text-muted text-[10px] font-semibold flex flex-col items-center justify-center gap-0.5 pt-1" data-page="chat" type="button">
-        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-lg transition-colors" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-lg transition-colors" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 5h14a2 2 0 012 2v7a2 2 0 01-2 2H9l-5 4v-4H5a2 2 0 01-2-2V7a2 2 0 012-2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M8 10h8M8 13h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <span>消息</span>
       </button>
       <button class="nav-item bg-transparent text-muted text-[10px] font-semibold flex flex-col items-center justify-center gap-0.5 pt-1" data-page="profile" type="button">
-        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-lg transition-colors" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 12a5 5 0 100-10 5 5 0 000 10zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5z"/></svg>
+        <svg class="nav-icon w-7 h-7 grid place-items-center rounded-lg transition-colors" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 21a7.5 7.5 0 0115 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <span>我的</span>
       </button>
     </nav>
 
     <script src="/runtime-config.js"></script>
-    <script src="./utils/tw.js?v=20260601e"></script>
-    <script src="./mockData.js?v=20260522a"></script>
+    <script src="./utils/tw.js?v=20260604b"></script>
+    <script src="./mockData.js?v=20260604b"></script>
     <script src="./utils/matching.js?v=20260519a"></script>
-    <script src="./app.js?v=20260601e"></script>
+    <script src="./scripts/core.js?v=20260605a"></script>
+    <script src="./scripts/discover.js?v=20260605f"></script>
+    <script src="./scripts/match.js?v=20260605b"></script>
+    <script src="./scripts/chat.js?v=20260605a"></script>
+    <script src="./scripts/fulfillment.js?v=20260605b"></script>
+    <script src="./app.js?v=20260605c"></script>
   </body>
 </html>

@@ -496,6 +496,16 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?", 1)[0] == "/runtime-config.js":
             amap_key = os.environ.get("AMAP_KEY", "").strip()
+            if not amap_key:
+                local_runtime = ROOT / "runtime-config.js"
+                if local_runtime.exists():
+                    text = local_runtime.read_text("utf-8", errors="ignore")
+                    marker = "window.AMAP_KEY"
+                    if marker in text:
+                        try:
+                            amap_key = text.split("=", 1)[1].split(";", 1)[0].strip().strip("\"'")
+                        except Exception:
+                            amap_key = ""
             body = (
                 f"window.AMAP_KEY = {json.dumps(amap_key)};\n"
                 f"window.__RUNTIME_CONFIG = {{ amapKeyConfigured: {json.dumps(bool(amap_key))} }};\n"
