@@ -113,6 +113,7 @@ const appState = {
   mapLayer: "normal",
   mapExpandedClusterId: null,
   mapManualPOI: false,
+  poiSheetTab: "demands",
   agentMemory: null,
   agentMemoryNotice: "",
   agentFeedbackLog: [],
@@ -129,9 +130,11 @@ function canShowDeveloperControls() {
 
 let gaodePOIs = [];
 let mockMapReady = false;
-let amapInstance = null; // 高德地图实例（有 Key 时使用）
+let amapInstance = null;
 let amapRangeCircle = null;
 let amapHeatLayer = null;
+let leafletMap = null;
+let leafletMarkers = [];
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));

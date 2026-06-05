@@ -2,6 +2,12 @@ function bindAreaPill() {
   const pill = $("#areaLabel");
   if (!pill || pill.dataset.bound) return;
   pill.dataset.bound = "1";
+  if (!canShowDeveloperControls()) {
+    pill.classList.add("is-static");
+    pill.setAttribute("aria-label", "当前小商圈");
+    pill.setAttribute("aria-disabled", "true");
+    return;
+  }
   pill.addEventListener("click", openCirclePage);
 }
 
@@ -122,12 +128,17 @@ function updateAreaPill() {
   if (!el) return;
   const circle = getCurrentCircle();
   const city = getCurrentCity();
+  const areaLabel = `${city.areaName || circle.shortName || "杨浦滨江"} · 小商圈`;
+  const canOpen = canShowDeveloperControls();
+  el.classList.toggle("is-static", !canOpen);
+  el.setAttribute("aria-label", canOpen ? "切换生活圈" : "当前小商圈");
+  el.setAttribute("aria-disabled", canOpen ? "false" : "true");
   el.innerHTML = `
     <span class="${TW.locPin}" aria-hidden="true" style="background:${circle.tint || "#F5F5F5"};border:1px solid ${circle.accent || "#EBEBEB"}">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="${circle.accent || "#757575"}"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
     </span>
-    <span class="${TW.locCopy}"><b>生活圈 · ${escapeHTML(city.shortName || city.name)}</b></span>
-    <span class="${TW.locChev}" aria-hidden="true">›</span>
+    <span class="${TW.locCopy}"><b>${escapeHTML(areaLabel)}</b></span>
+    ${canOpen ? `<span class="${TW.locChev}" aria-hidden="true">›</span>` : ""}
   `;
   bindAreaPill();
 }
@@ -215,19 +226,6 @@ function flatMapZonesHTML(classPrefix = "", options = {}) {
     <div class="${p}map-road road-diagonal-b" aria-hidden="true"></div>
     <div class="${p}map-road road-secondary-a" aria-hidden="true"></div>
     <div class="${p}map-road road-secondary-b" aria-hidden="true"></div>
-    <span class="${p}map-place-label label-westwood">主街</span>
-    <span class="${p}map-place-label label-campus">校园侧</span>
-    <span class="${p}map-place-label label-riverside">河岸路</span>
-    <span class="${p}map-place-label label-metro">地铁口</span>
-    <span class="${p}map-place-label label-park">口袋公园</span>
-    <span class="${p}map-place-label label-market">小吃街</span>
-    <span class="${p}map-street-name street-name-main">Westwood Blvd</span>
-    <span class="${p}map-street-name street-name-cross">Gayley Ave</span>
-    <span class="${p}map-street-name street-name-upper">Kinross Ave</span>
-    <span class="${p}map-zone-label zone-label-dining" aria-hidden="true">餐饮区</span>
-    <span class="${p}map-zone-label zone-label-play" aria-hidden="true">玩乐区</span>
-    <span class="${p}map-zone-label zone-label-sport" aria-hidden="true">运动区</span>
-    <span class="${p}map-zone-label zone-label-night" aria-hidden="true">夜生活</span>
     ${pulse}
     <div class="user-location-pin map-user-pin" style="left:${userPin.x}%;top:${userPin.y}%"></div>
     <div class="user-radius" data-radius-km="${currentBrowseRadiusKm()}" style="left:${userPin.x}%;top:${userPin.y}%;width:${radiusSize}%;height:${radiusSize}%">${rangeLabelHTML()}</div>
@@ -1042,7 +1040,7 @@ function renderMapPage() {
     $("#mapPage").innerHTML = `
       <div class="${TW.refDiscover}" id="refDiscoverRoot">
         <div class="${TW.discoverControls}">
-          <button type="button" class="${TW.locationPill}" id="areaLabel" aria-label="切换生活圈"></button>
+          <button type="button" class="${TW.locationPill}" id="areaLabel" aria-label="当前小商圈"></button>
           <div id="discoverHeaderExtras" class="${TW.discoverHeaderExtras}">
             <div id="refRadiusRow" class="${TW.refRadiusRow}"></div>
           </div>
@@ -1052,17 +1050,14 @@ function renderMapPage() {
           <div id="filterTabsRow" class="${TW.refMapChips}"></div>
           <div class="${TW.refMapCard}">
             <div class="${TW.refMapVisual}" id="refMapVisual">
-              <div class="map-layer-toggle" id="mapLayerToggle" aria-label="地图图层切换">
-                <button type="button" data-map-layer="normal">地点</button>
-                <button type="button" data-map-layer="heat">人流热力</button>
-              </div>
+              <div class="mapmaker-badge">小商圈地图</div>
               <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map is-discover-view"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
                 ${("AMap" in window) ? "" : `${flatMapDiscoverHTML()}
                 <div id="mockMapPins" class="map-pins-layer"></div>`}
               </div>
               <div class="${TW.refMapOverlay}">
                 <div id="refMapFooter" class="${TW.refMapFooter}"></div>
-                <button type="button" class="${TW.refMapLocate}" id="refMapLocate" aria-label="定位到我的位置">
+                <button type="button" class="${TW.refMapLocate}" id="refMapLocate" aria-label="定位到我的位置" ${canShowDeveloperControls() ? "" : "hidden"}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="#2F7EF7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#2F7EF7" stroke-width="2" stroke-linecap="round"/></svg>
                 </button>
               </div>
@@ -1100,6 +1095,16 @@ function renderMapPage() {
 function updateRefRadiusRow() {
   const el = document.getElementById("refRadiusRow");
   if (!el) return;
+  if (!canShowDeveloperControls()) {
+    const parent = document.getElementById("discoverHeaderExtras");
+    if (parent) parent.hidden = true;
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  const parent = document.getElementById("discoverHeaderExtras");
+  if (parent) parent.hidden = false;
+  el.hidden = false;
   const km = currentBrowseRadiusKm();
   el.innerHTML = BROWSE_RADIUS_PRESETS.map(({ value, label }) => `
     <button type="button" class="${TW.radiusPill} ${Math.abs(km - value) < 0.01 ? "is-active" : ""}" data-ref-radius="${value}">${label}</button>
@@ -1117,10 +1122,11 @@ function updateRefMapHeading() {
   if (!el) return;
   const circle = getCurrentCircle();
   const city = getCurrentCity();
-  const poi = appState.selectedPOI;
+  const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
+  const buddies = list.reduce((sum, poi) => sum + Number(poi.buddy_demand_count || 0), 0);
   el.innerHTML = `
-    <h2 class="text-lg font-bold text-ink leading-snug">${escapeHTML(poi ? poi.name : "今晚推荐")}</h2>
-    <p class="text-[13px] text-muted mt-1.5 leading-snug">${escapeHTML(city.shortName || city.name)} · ${escapeHTML(city.areaName || circle.shortName)} · ${poi ? `${poi.buddy_demand_count >= 2 ? `${poi.buddy_demand_count} 人正在组局` : "有人在组局"} · ${Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12))} 分钟可达` : `${escapeHTML(circle.shortName)} · ${browseRadiusPresetLabel(currentBrowseRadiusKm())}`}</p>
+    <h2 class="text-lg font-bold text-ink leading-snug">${escapeHTML(city.areaName || circle.shortName)}正在发生</h2>
+    <p class="text-[13px] text-muted mt-1.5 leading-snug">一个小商圈 · ${list.length} 家店 · ${buddies} 人想约 · 点 pin 看局</p>
   `;
 }
 
@@ -1141,8 +1147,8 @@ function updateRefMapFooter() {
   const best = appState.selectedPOI || ranked[0];
   const city = getCurrentCity();
   el.innerHTML = best
-    ? `<span>${escapeHTML(city.shortName || city.name)} · ${escapeHTML(best.name)}</span><span class="text-muted">· ${best.buddy_demand_count >= 5 ? "很多人在去" : "今晚推荐"}</span>`
-    : `<span class="text-muted">${escapeHTML(city.shortName || city.name)} · 换个范围看看更多推荐</span>`;
+    ? `<span>${escapeHTML(city.areaName || city.shortName || city.name)} · ${escapeHTML(best.name)}</span><span class="text-muted">· ${best.buddy_demand_count >= 5 ? "很多人在去" : "今晚推荐"}</span>`
+    : `<span class="text-muted">${escapeHTML(city.areaName || city.shortName || city.name)} · 点地图 pin 看附近组局</span>`;
 }
 
 function updateRefStickyBar(poi, demands) {
@@ -1188,7 +1194,12 @@ function joinDemandFromRefSheet(demandId, poi, demands) {
 
 function updateMapControls() {
   const el = document.getElementById("mapLayerToggle");
-  if (!el || el.dataset.bound) {
+  if (!el) {
+    appState.mapLayer = "normal";
+    syncMapLayerState();
+    return;
+  }
+  if (el.dataset.bound) {
     syncMapLayerState();
     return;
   }
@@ -1363,6 +1374,141 @@ function refreshMapSupply() {
   }
 }
 
+// ---------- Leaflet integration ----------
+function percentToLatLng(x, y, centerLat, centerLng) {
+  // Map percentage (0-100) to offset from center
+  // ~2km area: lat span ~0.018°, lng span ~0.024° (at lat 31°)
+  const latSpan = 0.018;
+  const lngSpan = 0.024;
+  return {
+    lat: centerLat + (0.5 - y / 100) * latSpan,
+    lng: centerLng + (x / 100 - 0.5) * lngSpan
+  };
+}
+
+function initLeafletMap() {
+  if (!window.L) return false;
+  const container = document.getElementById("mockMapCanvas");
+  if (!container) return false;
+
+  // Tear down any previous Leaflet instance
+  if (leafletMap) {
+    try { leafletMap.remove(); } catch (_) {}
+    leafletMap = null;
+    leafletMarkers = [];
+  }
+
+  container.className = "leaflet-map-host is-discover-view";
+  container.innerHTML = `
+    <div id="leafletTileLayer" style="position:absolute;inset:0;z-index:0;"></div>
+    <canvas id="heatCanvas" class="discover-heat-canvas leaflet-heat-overlay" aria-hidden="true"></canvas>
+    <div id="mockMapPins" class="map-pins-layer leaflet-pin-layer"></div>
+  `;
+
+  const city = getCurrentCity();
+  const centerLat = Number(city.center_lat || 31.252634);
+  const centerLng = Number(city.center_lng || 121.549153);
+
+  leafletMap = window.L.map("leafletTileLayer", {
+    center: [centerLat, centerLng],
+    zoom: 15,
+    zoomControl: false,
+    attributionControl: false,
+    dragging: true,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    touchZoom: true,
+    keyboard: false
+  });
+
+  window.L.tileLayer(
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+    { subdomains: "abcd", maxZoom: 19 }
+  ).addTo(leafletMap);
+
+  // User location dot
+  const userPin = currentCityUserPin();
+  const { lat: uLat, lng: uLng } = percentToLatLng(userPin.x, userPin.y, centerLat, centerLng);
+  window.L.marker([uLat, uLng], {
+    icon: window.L.divIcon({
+      className: "leaflet-user-icon",
+      html: `<div class="user-location-pin leaflet-user-dot"></div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    }),
+    interactive: false,
+    zIndexOffset: 9000
+  }).addTo(leafletMap);
+
+  return true;
+}
+
+function renderLeafletPins() {
+  if (!leafletMap || !window.L) return;
+  const layer = document.getElementById("mockMapPins");
+  if (!layer) return;
+
+  const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
+  const matchScoreMap = {};
+  appState.matchResults.forEach((r) => { matchScoreMap[r.poi.poi_id] = r.total_score; });
+
+  const city = getCurrentCity();
+  const centerLat = Number(city.center_lat || 31.252634);
+  const centerLng = Number(city.center_lng || 121.549153);
+
+  // Remove old Leaflet markers
+  leafletMarkers.forEach((m) => { try { leafletMap.removeLayer(m); } catch (_) {} });
+  leafletMarkers = [];
+
+  list.forEach((poi, index) => {
+    const pos = poiMapPercent(poi);
+    const { lat, lng } = percentToLatLng(pos.x, pos.y, centerLat, centerLng);
+    const matchScore = matchScoreMap[poi.poi_id];
+    const isHot = isHotPoi(poi);
+    const isSelected = poi.poi_id === appState.selectedPOI?.poi_id;
+    const isAI = Boolean(matchScore);
+    const g = poiPhotoGradient(poi);
+
+    const cls = [
+      "map-pin",
+      "pin-enter",
+      isAI ? "is-ai" : isHot ? "is-hot" : "",
+      isSelected ? "is-selected" : ""
+    ].filter(Boolean).join(" ");
+
+    const icon = window.L.divIcon({
+      className: "leaflet-poi-icon",
+      html: `<div class="${cls}" style="position:absolute;transform:translate(-50%,-50%);--pin-color:${g.accent};--pin-bg:${g.bg};"
+        data-poi-id="${poi.poi_id}" tabindex="-1" role="button" aria-label="${escapeHTML(poi.name)}">
+        ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
+        ${pinSummaryHTML(poi, matchScore)}
+      </div>`,
+      iconSize: [0, 0],
+      iconAnchor: [0, 0]
+    });
+
+    const marker = window.L.marker([lat, lng], {
+      icon,
+      zIndexOffset: isSelected ? 2000 : isAI ? 1000 : index
+    }).addTo(leafletMap);
+
+    marker.on("click", () => {
+      appState.selectedPOI = poi;
+      appState.mapManualPOI = true;
+      appState.poiSheetTab = "demands";
+      renderLeafletPins();
+      updateRefMapVisual();
+      updatePOISheet();
+      const sheet = document.getElementById("poiSheet");
+      if (sheet) sheet.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    leafletMarkers.push(marker);
+  });
+
+  setTimeout(renderHeatCanvas, 0);
+}
+
 function initMockMap() {
   if (!appState.selectedCircleId && lifeCircles[0]) appState.selectedCircleId = lifeCircles[0].id;
   gaodePOIs = filteredMockPois(appState.selectedCategory);
@@ -1380,7 +1526,12 @@ function initMockMap() {
 
 function initFakeMap() {
   mockMapReady = true;
-  renderMockMapPins();
+  // Try Leaflet first; CSS fake map as fallback
+  if (initLeafletMap()) {
+    renderLeafletPins();
+  } else {
+    renderMockMapPins();
+  }
   updateMapStats();
   updateRefMapVisual();
   updatePOISheet();
@@ -1659,7 +1810,7 @@ function isDiscoverMapView() {
 }
 
 function isDiscoverPinSelected(poi) {
-  return !!(appState.mapManualPOI && poi && appState.selectedPOI && poi.poi_id === appState.selectedPOI.poi_id);
+  return !!(poi && appState.selectedPOI && poi.poi_id === appState.selectedPOI.poi_id);
 }
 
 const DISCOVER_PIN_MARKER_SVG = `<svg class="discover-pin-drop-svg" viewBox="0 0 24 36" width="32" height="42" aria-hidden="true"><path d="M12 0C5.373 0 0 5.373 0 12c0 8.25 12 24 12 24s12-15.75 12-24C24 5.373 18.627 0 12 0z" fill="#FF2442" stroke="#fff" stroke-width="1.5"/><circle cx="12" cy="11" r="4.5" fill="#fff" fill-opacity="0.92"/></svg>`;
@@ -1667,41 +1818,32 @@ const DISCOVER_PIN_MARKER_SVG = `<svg class="discover-pin-drop-svg" viewBox="0 0
 function discoverMapPinHTML(poi, index) {
   const isSelected = isDiscoverPinSelected(poi);
   const pos = poiMapPercent(poi);
-  const hot = isHotPoi(poi);
-  if (isSelected) {
-    return `
-    <div role="button" tabindex="0" class="map-pin discover-pin discover-pin-marker is-selected pin-enter"
-      data-poi-id="${poi.poi_id}"
-      style="left:${pos.x}%;top:${pos.y}%;--float-delay:${(index % 4) * 0.14}s"
-      aria-label="${escapeHTML(poi.name)}，已选中">
-      ${DISCOVER_PIN_MARKER_SVG}
-    </div>`;
-  }
+  const hot = isHotPoi(poi) || Number(poi.buddy_demand_count || 0) >= 5;
+  const g = poiPhotoGradient(poi);
+  const count = Number(poi.buddy_demand_count || 0);
+  const abbr = categoryAbbr(poi);
   return `
-    <div role="button" tabindex="0" class="map-pin discover-pin discover-pin-dot ${hot ? "is-hot" : ""} pin-enter"
+    <button type="button" class="map-pin discover-pin mapmaker-pin ${hot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} pin-enter"
       data-poi-id="${poi.poi_id}"
-      style="left:${pos.x}%;top:${pos.y}%;--float-delay:${(index % 4) * 0.14}s"
-      aria-label="${escapeHTML(poi.name)}">
-      <span class="discover-pin-circle" aria-hidden="true"></span>
-    </div>`;
+      style="left:${pos.x}%;top:${pos.y}%;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 4) * 0.14}s"
+      aria-label="${escapeHTML(poi.name)}，${count} 人想约">
+      <span class="mapmaker-pin-badge" aria-hidden="true"><b>${escapeHTML(abbr)}</b><em>${count}</em></span>
+      ${isSelected ? `<span class="mapmaker-pin-label">${escapeHTML(poi.name)}</span>` : ""}
+    </button>`;
 }
 
 function discoverAmapPinHTML(poi, index) {
   const isSelected = isDiscoverPinSelected(poi);
-  const hot = isHotPoi(poi);
-  if (isSelected) {
-    return `
-      <div class="map-pin discover-pin discover-pin-marker is-selected pin-enter"
-           style="cursor:pointer;--float-delay:${(index % 4) * 0.14}s"
-           title="${escapeHTML(poi.name)}">
-        ${DISCOVER_PIN_MARKER_SVG}
-      </div>`;
-  }
+  const hot = isHotPoi(poi) || Number(poi.buddy_demand_count || 0) >= 5;
+  const g = poiPhotoGradient(poi);
+  const count = Number(poi.buddy_demand_count || 0);
+  const abbr = categoryAbbr(poi);
   return `
-    <div class="map-pin discover-pin discover-pin-dot ${hot ? "is-hot" : ""} pin-enter"
-         style="cursor:pointer;--float-delay:${(index % 4) * 0.14}s"
-         title="${escapeHTML(poi.name)}">
-      <span class="discover-pin-circle" aria-hidden="true"></span>
+    <div class="map-pin discover-pin mapmaker-pin ${hot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} pin-enter"
+         style="cursor:pointer;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 4) * 0.14}s"
+         title="${escapeHTML(poi.name)}，${count} 人想约">
+      <span class="mapmaker-pin-badge" aria-hidden="true"><b>${escapeHTML(abbr)}</b><em>${count}</em></span>
+      ${isSelected ? `<span class="mapmaker-pin-label">${escapeHTML(poi.name)}</span>` : ""}
     </div>`;
 }
 
@@ -1736,19 +1878,31 @@ function renderMockMapPins() {
   if (!layer) return;
   const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
   const ranked = rankedMapPois(list);
-  const selectedPoi = appState.mapManualPOI ? appState.selectedPOI : null;
   if (!appState.selectedPOI) {
     const preferred = ranked[0] || list[0] || null;
     if (preferred) appState.selectedPOI = preferred;
   }
 
   const isRefDiscover = !!document.getElementById("refDiscoverRoot");
+  // If Leaflet is active, pins are managed by renderLeafletPins — skip CSS pin rendering
+  if (isRefDiscover && leafletMap) {
+    renderLeafletPins();
+    updateRefMapFooter();
+    updateRefMapHeading();
+    return;
+  }
+  // CSS fake map: show all ranked POIs (spread individually, no clustering)
+  const pinPois = isRefDiscover ? ranked : [];
+  if (isRefDiscover && pinPois.length && !pinPois.some((p) => p.poi_id === appState.selectedPOI?.poi_id)) {
+    appState.selectedPOI = pinPois[0];
+    appState.mapManualPOI = false;
+  }
+  const selectedPoi = appState.selectedPOI || ranked[0] || null;
   const routeHTML = isRefDiscover
     ? (selectedPoi ? navigationRouteHTML(selectedPoi) : "")
     : navigationRouteHTML(appState.selectedPOI);
 
   if (isRefDiscover) {
-    const pinPois = ranked.slice(0, 5);
     layer.innerHTML = routeHTML + pinPois.map((p, i) => discoverMapPinHTML(p, i)).join("");
     bindDiscoverMapPins(layer, list);
     updateRefMapFooter();
@@ -1938,7 +2092,9 @@ function updateSceneNavigator() {
   const activeGroupId = activeSceneGroupId();
   const chips = [
     { id: "all", label: "全部", filter: "全部" },
-    ...sceneGroups.map((g) => ({ id: g.id, label: g.label, filter: `group:${g.id}` }))
+    { id: "eat", label: "吃喝", filter: "group:eat" },
+    { id: "sport", label: "动起来", filter: "group:sport" },
+    { id: "board", label: "桌游", filter: "group:board" }
   ];
   el.innerHTML = chips.map((chip) => {
     const isActive = chip.id === "all"
@@ -1951,6 +2107,10 @@ function updateSceneNavigator() {
       applySceneFilter(btn.dataset.discoverFilter, { expandNav: false });
       updateSceneNavigator();
       updateDiscoverRecommend();
+      renderMockMapPins();
+      updatePOISheet();
+      updateRefMapVisual();
+      updateRefMapHeading();
       showToast(`已切换到${btn.textContent.trim()}`);
     });
   });
@@ -1959,25 +2119,74 @@ function updateSceneNavigator() {
 function updateDiscoverRecommend() {
   const el = document.getElementById("discoverRecommend");
   if (!el) return;
-  const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory)).slice(0, 4);
+  const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
   if (!list.length) {
     el.innerHTML = "";
     el.hidden = true;
     return;
   }
+  const displayPoiIds = new Set(list.map((p) => p.poi_id));
+  const allUsers = [...users, ...backgroundUsers];
+  const liveDemands = buddyDemands
+    .filter((d) => d.status === "waiting" && displayPoiIds.has(d.poi_id))
+    .slice(0, 3)
+    .map((d) => {
+      const poi = pois.find((p) => p.poi_id === d.poi_id);
+      const user = allUsers.find((u) => u.user_id === d.user_id);
+      return { ...d, poi, user, distance_km: user?.distance_km ?? poi?.distance_km ?? 1.2 };
+    });
+  const moments = circleMoments(getCurrentCircle()).slice(0, 3);
   el.hidden = false;
   el.innerHTML = `
-    <div class="${TW.discoverRecHead}">
-      <h3 class="text-[17px] font-bold text-ink">今晚值得去</h3>
-      <button type="button" class="${TW.linkish}" id="openCircleFromList">换生活圈</button>
+    <div class="discover-live-section">
+      <div class="${TW.discoverRecHead}">
+        <h3 class="text-[17px] font-bold text-ink">圈子里正在发生</h3>
+        <span class="discover-section-count">${list.length} 家店</span>
+      </div>
+      <div class="discover-moment-list">
+        ${moments.map((m) => `
+          <button type="button" class="discover-moment-row" data-feed-poi="${escapeHTML(m.poi_id || "")}">
+            <span class="discover-feed-avatar">${escapeHTML(m.avatar)}</span>
+            <span class="discover-feed-body">
+              <b>${escapeHTML(m.user)} <small>${escapeHTML(m.ago)}</small></b>
+              <em>${escapeHTML(m.text)}</em>
+            </span>
+          </button>
+        `).join("")}
+      </div>
     </div>
-    <div class="${TW.discoverRecList}">
-      ${list.map((p) => {
+    <div class="discover-live-section">
+      <div class="${TW.discoverRecHead}">
+        <h3 class="text-[17px] font-bold text-ink">可加入的局</h3>
+        <span class="discover-section-count">${liveDemands.length} 个可加入</span>
+      </div>
+      <div class="discover-join-list">
+        ${liveDemands.map((d) => {
+          const poi = d.poi || pois.find((p) => p.poi_id === d.poi_id);
+          const avatar = (d.user?.nickname || d.activity_type || "搭")[0];
+          return `
+            <div class="discover-join-row">
+              <span class="discover-feed-avatar">${escapeHTML(avatar)}</span>
+              <span class="discover-feed-body">
+                <b>${escapeHTML(poi?.name || "附近地点")} <small>${escapeHTML(d.target_time || "今晚")}</small></b>
+                <em>${escapeHTML(d.activity_type || "搭子")} · ¥${d.budget_min}–${d.budget_max} · ${d.distance_km}km</em>
+              </span>
+              <button type="button" data-join-demand="${escapeHTML(d.demand_id)}">加入</button>
+            </div>`;
+        }).join("") || `<p class="${TW.muted}" style="font-size:12px;">当前筛选下暂无可加入的局，点地图商家可以快速匹配。</p>`}
+      </div>
+    </div>
+    <div class="discover-live-section">
+      <div class="${TW.discoverRecHead}">
+        <h3 class="text-[17px] font-bold text-ink">地图上的地点</h3>
+        <span class="discover-section-count">按当前筛选</span>
+      </div>
+      <div class="${TW.discoverRecList}">
+      ${list.slice(0, 4).map((p) => {
         const walkMin = Math.max(3, Math.round(Number(p.distance_km || 0.8) * 12));
         const active = appState.selectedPOI?.poi_id === p.poi_id;
         const wait = Number(p.wait_time_min || 0);
         const waitLabel = wait <= 3 ? "免排队" : wait <= 12 ? `${wait}min 等位` : "先锁时间";
-        const demandLabel = p.buddy_demand_count >= 2 ? `${p.buddy_demand_count} 人想约` : "今晚推荐";
         return `
           <button type="button" class="${TW.discoverRecRow} ${active ? "is-active" : ""}" data-rec-poi="${p.poi_id}">
             <span class="${TW.discoverRecThumb}" style="background-image:url('${poiCoverImage(p)}')"></span>
@@ -1988,15 +2197,30 @@ function updateDiscoverRecommend() {
               </span>
               <small>${escapeHTML(p.sub_category)} · ${walkMin} 分钟可达</small>
               <span class="discover-rec-metrics">
-                <i>${escapeHTML(demandLabel)}</i>
+                <i>${p.buddy_demand_count} 人想约</i>
                 <i>${p.rating} 分</i>
               </span>
             </span>
             <span class="${TW.discoverRecChev}">›</span>
           </button>`;
       }).join("")}
+      </div>
     </div>`;
-  el.querySelector("#openCircleFromList")?.addEventListener("click", openCirclePage);
+  el.querySelectorAll("[data-feed-poi]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const poi = list.find((p) => p.poi_id === btn.dataset.feedPoi) || getMockPoisWithCoords().find((p) => p.poi_id === btn.dataset.feedPoi);
+      if (!poi) return;
+      appState.selectedPOI = poi;
+      appState.mapManualPOI = true;
+      renderMockMapPins();
+      updatePOISheet();
+      updateRefMapVisual();
+      updateDiscoverRecommend();
+    });
+  });
+  el.querySelectorAll("[data-join-demand]").forEach((btn) => {
+    btn.addEventListener("click", () => joinDemand(btn.dataset.joinDemand));
+  });
   el.querySelectorAll("[data-rec-poi]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const poi = (gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory)).find((p) => p.poi_id === btn.dataset.recPoi) || getMockPoisWithCoords().find((p) => p.poi_id === btn.dataset.recPoi);
@@ -2031,26 +2255,15 @@ function updatePOISheet() {
   const el = document.getElementById("poiSheet");
   if (!el) return;
   if (!appState.selectedPOI) {
-    el.innerHTML = `
-      <div class="${TW.refPoiBody}">
-        <p class="${TW.muted}">当前生活圈和类型下没有可显示的商家，换个圈子或类型试试。</p>
-      </div>
-    `;
+    el.innerHTML = `<div class="${TW.refPoiBody}"><p class="${TW.muted}">当前生活圈和类型下没有可显示的商家，换个圈子或类型试试。</p></div>`;
     return;
   }
   const poi = appState.selectedPOI;
   const demands = getFakeDemands(poi);
-  const visibleDemands = demands.slice(0, 2);
   const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
   const opportunityScore = computeOpportunityScore(poi);
-  const dealText = merchantDealShort(poi);
-  const waitText = merchantWaitLabel(poi);
-  const liveCount = Number(poi.buddy_demand_count || 0);
-  const tags = (poi.tags || []).slice(0, 4);
-  const groupLabel = poi.buddy_demand_count >= 2
-    ? `${poi.buddy_demand_count} 人正在组局`
-    : (poi.buddy_demand_count >= 1 ? "正在组局" : "可以发起组局");
-  const primaryLabel = visibleDemands.length ? "加入最近组局" : "AI 快速匹配";
+  const tab = appState.poiSheetTab || "demands";
+
   el.innerHTML = `
     <div class="${TW.refPoiHero}" style="background-image:url('${poiCoverImage(poi)}')">
       <div class="ref-poi-hero-badges">
@@ -2067,38 +2280,217 @@ function updatePOISheet() {
         </div>
         <span class="ref-poi-opportunity"><small>机会</small><b>${opportunityScore}</b></span>
       </div>
-      <div class="ref-poi-metric-grid">
-        <span><b>${liveCount}</b><small>想约</small></span>
-        <span><b>${poi.wait_time_min}min</b><small>${escapeHTML(waitText)}</small></span>
-        <span><b>¥${poi.avg_price}</b><small>人均</small></span>
+      <div class="poi-sheet-tabs">
+        <button class="poi-tab ${tab === "demands" ? "is-active" : ""}" data-poi-tab="demands">可加入的局</button>
+        <button class="poi-tab ${tab === "create" ? "is-active" : ""}" data-poi-tab="create">创建新局</button>
+        <button class="poi-tab ${tab === "info" ? "is-active" : ""}" data-poi-tab="info">商家信息</button>
       </div>
-      <p class="${TW.refPoiMeta}">${escapeHTML(poi.sub_category)} · ${escapeHTML(groupLabel)} · ${escapeHTML(dealText)}</p>
-      ${tags.length ? `<div class="ref-poi-tags">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}
-
-      ${visibleDemands.length ? `
-        <div class="${TW.refLiveHead}">
-          <h3 class="text-[15px] font-bold text-ink">附近正在约</h3>
-          <span>${visibleDemands.length} 个可加入</span>
-        </div>
-        ${visibleDemands.map((d) => refDemandRowHTML(d)).join("")}
-      ` : `
-        <div class="ref-empty-live">
-          <b>暂时没有公开局</b>
-          <p>可以让 AI 按预算、距离和聊天风格帮你发起匹配。</p>
-        </div>
-      `}
-
-      <div class="${TW.refPoiActions}">
-        <button type="button" class="${TW.refBtnPrimary}" id="poiJoinBtn">${primaryLabel}</button>
-        <button type="button" class="${TW.refBtnSecondary}" id="matchFromPoi">按这家店找搭子</button>
+      <div id="poiTabContent" class="poi-tab-content">
+        ${renderPoiTabContent(tab, poi, demands)}
       </div>
     </div>
   `;
+
+  el.querySelectorAll(".poi-tab[data-poi-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      appState.poiSheetTab = btn.dataset.poiTab;
+      updatePOISheet();
+    });
+  });
   el.querySelectorAll(".ref-live-row[data-demand]").forEach((card) => {
     card.addEventListener("click", () => joinDemandFromRefSheet(card.dataset.demand, poi, demands));
   });
   bindRefPoiActions(poi, demands);
+  bindCreateTabListeners(poi);
   updateRefMapHeading();
+}
+
+function renderPoiTabContent(tab, poi, demands) {
+  if (tab === "create") return renderCreateSessionTab(poi);
+  if (tab === "info") return renderMerchantInfoTab(poi);
+  return renderDemandsTab(poi, demands);
+}
+
+function renderDemandsTab(poi, demands) {
+  const visibleDemands = demands.slice(0, 3);
+  const liveCount = Number(poi.buddy_demand_count || 0);
+  const waitText = merchantWaitLabel(poi);
+  const dealText = merchantDealShort(poi);
+  const groupLabel = liveCount >= 2 ? `${liveCount} 人正在组局` : liveCount >= 1 ? "正在组局" : "可以发起组局";
+  const primaryLabel = visibleDemands.length ? "加入最近组局" : "AI 快速匹配";
+  return `
+    <div class="ref-poi-metric-grid">
+      <span><b>${liveCount}</b><small>想约</small></span>
+      <span><b>${poi.wait_time_min}min</b><small>${escapeHTML(waitText)}</small></span>
+      <span><b>¥${poi.avg_price}</b><small>人均</small></span>
+    </div>
+    <p class="${TW.refPoiMeta}">${escapeHTML(poi.sub_category)} · ${escapeHTML(groupLabel)} · ${escapeHTML(dealText)}</p>
+    ${visibleDemands.length ? `
+      <div class="${TW.refLiveHead}">
+        <h3 class="text-[15px] font-bold text-ink">附近正在约</h3>
+        <span>${visibleDemands.length} 个可加入</span>
+      </div>
+      ${visibleDemands.map((d) => refDemandRowHTML(d)).join("")}
+    ` : `
+      <div class="ref-empty-live">
+        <b>暂时没有公开局</b>
+        <p>可以让 AI 按预算、距离和聊天风格帮你发起匹配。</p>
+      </div>
+    `}
+    <div class="${TW.refPoiActions}">
+      <button type="button" class="${TW.refBtnPrimary}" id="poiJoinBtn">${primaryLabel}</button>
+      <button type="button" class="${TW.refBtnSecondary}" id="matchFromPoi">按这家店找搭子</button>
+    </div>
+  `;
+}
+
+function renderCreateSessionTab(poi) {
+  const budgetBase = Math.max(40, Math.round(Number(poi.avg_price || 80) / 10) * 10);
+  const timeOptions = ["今晚 18:00", "今晚 19:30", "今晚 21:00", "周末 15:00"];
+  const budgetOptions = [Math.max(40, budgetBase - 20), budgetBase, budgetBase + 30];
+  return `
+    <div class="create-session-form">
+      <p class="create-session-heading">在 <b>${escapeHTML(poi.name)}</b> 发起一个局</p>
+      <div class="create-field-row">
+        <label class="create-field-label">活动时间</label>
+        <div class="create-time-grid">
+          ${timeOptions.map((t) => `<button type="button" class="create-time-opt" data-t="${escapeHTML(t)}">${escapeHTML(t)}</button>`).join("")}
+        </div>
+        <input id="createTimeCustom" class="create-input" value="${timeOptions[1]}" placeholder="或自定义时间..." />
+      </div>
+      <div class="create-two-col">
+        <div class="create-field-row">
+          <label class="create-field-label">人数</label>
+          <div class="create-count-row">
+            <button type="button" id="createGroupMinus" class="create-count-btn">−</button>
+            <input id="createGroupInput" type="number" min="1" max="12" value="2" class="create-count-input" />
+            <button type="button" id="createGroupPlus" class="create-count-btn">+</button>
+          </div>
+        </div>
+        <div class="create-field-row">
+          <label class="create-field-label">人均预算</label>
+          <div class="create-budget-row">
+            <span class="create-budget-symbol">¥</span>
+            <input id="createBudgetInput" type="number" min="0" step="10" value="${budgetBase}" class="create-budget-input" />
+          </div>
+          <div class="create-budget-chips">
+            ${budgetOptions.map((a) => `<button type="button" class="create-budget-chip" data-budget="${a}">¥${a}</button>`).join("")}
+          </div>
+        </div>
+      </div>
+      <div class="create-field-row">
+        <label class="create-field-label">聊天氛围</label>
+        <div class="create-style-row">
+          ${["轻松聊天", "低压力 1v1", "小组热闹", "安静陪伴"].map((s) => `<button type="button" class="create-style-opt" data-style="${s}">${s}</button>`).join("")}
+        </div>
+      </div>
+      <button type="button" class="create-submit-btn" id="createSessionSubmit">发起这个局 →</button>
+    </div>
+  `;
+}
+
+function renderMerchantInfoTab(poi) {
+  const deal = getDeal(poi.poi_id);
+  const walkMin = Math.max(3, Math.round(Number(poi.distance_km || 0.8) * 12));
+  const tags = (poi.tags || []).slice(0, 6);
+  const hours = poi.business_hours || "11:00–22:00";
+  const address = poi.address || `${getCurrentCity().areaName || "附近"} · ${poi.sub_category}`;
+  const social = (poi.suitable_social_styles || []).slice(0, 3);
+  return `
+    <div class="merchant-info-body">
+      <div class="merchant-info-meta-row">
+        <span class="merchant-info-rating">⭐ ${poi.rating}</span>
+        <span>${escapeHTML(poi.sub_category)}</span>
+        <span>${poi.distance_km}km</span>
+        <span>步行约 ${walkMin} 分钟</span>
+      </div>
+      <div class="merchant-info-grid">
+        <div><b>¥${poi.avg_price}</b><small>人均消费</small></div>
+        <div><b>${poi.wait_time_min}min</b><small>当前等待</small></div>
+        <div><b>${poi.buddy_demand_count}</b><small>人想约</small></div>
+        <div><b>${escapeHTML(poi.open_status || "营业中")}</b><small>状态</small></div>
+      </div>
+      <div class="merchant-info-row">
+        <span class="merchant-info-icon">🕐</span>
+        <span>${escapeHTML(hours)}</span>
+      </div>
+      <div class="merchant-info-row">
+        <span class="merchant-info-icon">📍</span>
+        <span>${escapeHTML(address)}</span>
+      </div>
+      ${deal ? `
+        <div class="merchant-deal-row">
+          <span class="deal-badge">团购</span>
+          <div>
+            <b>${escapeHTML(deal.title)}</b>
+            <p>¥${deal.discount_price} · 省 ¥${Math.max(0, deal.original_price - deal.discount_price)} · ${escapeHTML(deal.valid_time || "今日可用")}</p>
+          </div>
+        </div>
+      ` : ""}
+      ${tags.length ? `<div class="merchant-info-tags">${tags.map((t) => `<span>${escapeHTML(t)}</span>`).join("")}</div>` : ""}
+      ${social.length ? `<div class="merchant-info-social"><span class="merchant-info-label">适合</span>${social.map((s) => `<span>${escapeHTML(s)}</span>`).join("")}</div>` : ""}
+      <div class="${TW.refPoiActions}" style="margin-top:12px;">
+        <button type="button" class="${TW.refBtnPrimary}" id="matchFromPoi">找搭子去这里</button>
+        <button type="button" class="${TW.refBtnSecondary}" id="poiNavBtn">导航出发</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindCreateTabListeners(poi) {
+  const el = document.getElementById("poiTabContent");
+  if (!el || appState.poiSheetTab !== "create") return;
+
+  // Time option selection
+  el.querySelectorAll(".create-time-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      el.querySelectorAll(".create-time-opt").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const input = document.getElementById("createTimeCustom");
+      if (input) input.value = btn.dataset.t;
+    });
+  });
+  el.querySelector(".create-time-opt")?.classList.add("is-active");
+
+  // Style selection
+  el.querySelectorAll(".create-style-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      el.querySelectorAll(".create-style-opt").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+    });
+  });
+  el.querySelector(".create-style-opt")?.classList.add("is-active");
+
+  // Budget chips
+  el.querySelectorAll(".create-budget-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      el.querySelectorAll(".create-budget-chip").forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const input = document.getElementById("createBudgetInput");
+      if (input) input.value = btn.dataset.budget;
+    });
+  });
+
+  // Group count
+  document.getElementById("createGroupMinus")?.addEventListener("click", () => {
+    const inp = document.getElementById("createGroupInput");
+    if (inp) inp.value = Math.max(1, Number(inp.value) - 1);
+  });
+  document.getElementById("createGroupPlus")?.addEventListener("click", () => {
+    const inp = document.getElementById("createGroupInput");
+    if (inp) inp.value = Math.min(12, Number(inp.value) + 1);
+  });
+
+  // Submit
+  document.getElementById("createSessionSubmit")?.addEventListener("click", () => {
+    const time = document.getElementById("createTimeCustom")?.value || "今晚 19:30";
+    const size = document.getElementById("createGroupInput")?.value || "2";
+    const budget = document.getElementById("createBudgetInput")?.value || poi.avg_price;
+    const style = el.querySelector(".create-style-opt.is-active")?.dataset.style || "轻松聊天";
+    showToast(`已在 ${poi.name} 发起 ${size} 人局 · ${time} · ¥${budget} 以内 · ${style}`);
+    appState.poiSheetTab = "demands";
+    updatePOISheet();
+  });
 }
 
 function opportunitySummaryForPoi(poi) {
