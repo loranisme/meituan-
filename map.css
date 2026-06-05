@@ -3601,6 +3601,126 @@ nav[aria-label="主导航"] {
   font-size: 12px;
   font-weight: 800;
 }
+
+/* ============================================================
+   Agent 推理面板 — <details> 原生折叠，无需 JS
+   ============================================================ */
+.dev-reasoning-details {
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid #f0f0f0;
+  background: #fafafa;
+  overflow: hidden;
+}
+.dev-reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9ca3af;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  transition: color 0.15s;
+}
+.dev-reasoning-summary::-webkit-details-marker { display: none; }
+.dev-reasoning-details[open] .dev-reasoning-summary {
+  color: #6b7280;
+  border-bottom: 1px solid #f0f0f0;
+}
+.dev-reasoning-icon { font-size: 11px; }
+.dev-reasoning-chevron {
+  margin-left: auto;
+  font-size: 14px;
+  transition: transform 0.2s;
+  color: #d1d5db;
+}
+.dev-reasoning-details[open] .dev-reasoning-chevron { transform: rotate(90deg); }
+.dev-reasoning-body {
+  display: grid;
+  gap: 0;
+  padding: 0 12px 12px;
+}
+.dev-section {
+  padding: 10px 0;
+  border-bottom: 1px solid #f5f5f5;
+}
+.dev-section:last-child { border-bottom: 0; }
+.dev-section-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #9ca3af;
+  letter-spacing: 0.03em;
+  margin: 0 0 6px;
+}
+.dev-section-text {
+  font-size: 12px;
+  color: #4b5563;
+  line-height: 1.55;
+  margin: 0 0 4px;
+}
+.dev-section-sub { color: #9ca3af; }
+.dev-section-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  color: #d1d5db;
+  font-family: monospace;
+}
+.dev-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 5px 0 0;
+}
+.dev-chip {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.dev-chip-cat { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+.dev-chip-tag { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+.dev-bd-grid { display: grid; gap: 5px; }
+.dev-bd-row {
+  display: grid;
+  grid-template-columns: 58px 1fr 28px;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+}
+.dev-bd-row span { color: #9ca3af; font-weight: 600; }
+.dev-bd-row b { color: #1a1a1a; font-weight: 800; text-align: right; }
+.dev-bd-bar-wrap { height: 5px; background: #f0f0f0; border-radius: 999px; overflow: hidden; }
+.dev-bd-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #FFC400, #FF6B35);
+  border-radius: 999px;
+  min-width: 4px;
+}
+.dev-intent-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+  font-size: 11px;
+  color: #4b5563;
+}
+.dev-intent-grid b { color: #9ca3af; font-weight: 700; margin-right: 3px; }
+.dev-layer-tag {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
 .developer-toggle {
   min-height: 32px;
   padding: 6px 10px;

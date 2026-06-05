@@ -1540,8 +1540,98 @@ function renderMatchCard(match, index) {
         <button class="${TW.feedbackChip}" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
         <button class="${TW.feedbackChip}" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
       </div>` : ""}
+      ${renderDevReasoning(match, index)}
       <button class="${TW.primaryButton} ${TW.wide}" data-invite-match="${index}" data-select-match="${index}" style="margin-top:4px;">发出邀约</button>
     </article>
+  `;
+}
+
+function renderDevReasoning(match, index) {
+  const director = match.ai_director || {};
+  const bd = match.score_breakdown || {};
+  const intent = match.intent || appState.parsedIntent || {};
+  const filter = appState.aiDirector?.poi_filter;
+  const pricing = computeDealPricing(match);
+
+  const bdRows = [
+    ["时间契合", bd.time], ["距离", bd.distance], ["预算", bd.budget],
+    ["品类", bd.category], ["社交风格", bd.social_style], ["兴趣", bd.interest],
+    ["地点综合", bd.place], ["信誉", bd.reputation]
+  ].filter(([, v]) => v != null);
+
+  const intentLayer = intent.parse_layer === "agent_enriched" ? "Gemini 增强" :
+    intent.parse_layer === "low_confidence" ? "低置信度" : "规则层";
+
+  return `
+    <details class="dev-reasoning-details">
+      <summary class="dev-reasoning-summary">
+        <span class="dev-reasoning-icon">⚙</span>
+        <span>Agent 推理过程</span>
+        <span class="dev-reasoning-chevron">›</span>
+      </summary>
+      <div class="dev-reasoning-body">
+
+        ${filter?.reasoning || filter?.categories?.length ? `
+          <div class="dev-section">
+            <p class="dev-section-label">🔍 商家过滤</p>
+            ${filter.reasoning ? `<p class="dev-section-text">${escapeHTML(filter.reasoning)}</p>` : ""}
+            <div class="dev-chip-row">
+              ${(filter.categories || []).map((c) => `<span class="dev-chip dev-chip-cat">${escapeHTML(c)}</span>`).join("")}
+              ${(filter.search_tags || []).map((t) => `<span class="dev-chip dev-chip-tag">#${escapeHTML(t)}</span>`).join("")}
+            </div>
+          </div>
+        ` : ""}
+
+        <div class="dev-section">
+          <p class="dev-section-label">📊 评分明细（总分 ${match.total_score}）</p>
+          <div class="dev-bd-grid">
+            ${bdRows.map(([label, val]) => `
+              <div class="dev-bd-row">
+                <span>${escapeHTML(label)}</span>
+                <div class="dev-bd-bar-wrap">
+                  <div class="dev-bd-bar" style="width:${Math.min(100, val)}%"></div>
+                </div>
+                <b>${val}</b>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <div class="dev-section">
+          <p class="dev-section-label">🎯 意图解析 <span class="dev-layer-tag">${intentLayer}</span></p>
+          <div class="dev-intent-grid">
+            <span><b>活动</b> ${escapeHTML(intent.activity_type || "-")}</span>
+            <span><b>品类</b> ${escapeHTML(intent.category_preference || "-")}</span>
+            <span><b>预算</b> ¥${intent.budget_min}–${intent.budget_max}</span>
+            <span><b>社交</b> ${escapeHTML(intent.social_style || "-")}</span>
+            <span><b>时间</b> ${escapeHTML(intent.target_time || "-")}</span>
+            <span><b>距离</b> ${intent.distance_tolerance_km}km</span>
+            <span><b>置信度</b> ${Math.round((intent.parse_confidence || 0.8) * 100)}%</span>
+            <span><b>券后</b> ¥${pricing.perPerson}/人</span>
+          </div>
+        </div>
+
+        ${director.explanation || director.score_reason ? `
+          <div class="dev-section">
+            <p class="dev-section-label">💡 Gemini 说明</p>
+            ${director.explanation ? `<p class="dev-section-text">${escapeHTML(director.explanation)}</p>` : ""}
+            ${director.score_reason ? `<p class="dev-section-text dev-section-sub">${escapeHTML(director.score_reason)}</p>` : ""}
+          </div>
+        ` : ""}
+
+        ${director.risk ? `
+          <div class="dev-section">
+            <p class="dev-section-label">⚠️ 风险预判</p>
+            <p class="dev-section-text">${escapeHTML(director.risk)}</p>
+          </div>
+        ` : ""}
+
+        <div class="dev-section dev-section-meta">
+          <span>方案 ${index + 1} / match_id: ${escapeHTML(String(match.match_id || "-").slice(0, 20))}</span>
+          <span>user_score ${match.user_score} · place_score ${match.place_score}</span>
+        </div>
+      </div>
+    </details>
   `;
 }
 
