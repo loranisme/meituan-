@@ -2161,23 +2161,6 @@ function updateDiscoverRecommend() {
   el.innerHTML = `
     <div class="discover-live-section">
       <div class="${TW.discoverRecHead}">
-        <h3 class="text-[17px] font-bold text-ink">圈子里正在发生</h3>
-        <span class="discover-section-count">${list.length} 家店</span>
-      </div>
-      <div class="discover-moment-list">
-        ${moments.map((m) => `
-          <button type="button" class="discover-moment-row" data-feed-poi="${escapeHTML(m.poi_id || "")}">
-            <span class="discover-feed-avatar">${escapeHTML(m.avatar)}</span>
-            <span class="discover-feed-body">
-              <b>${escapeHTML(m.user)} <small>${escapeHTML(m.ago)}</small></b>
-              <em>${escapeHTML(m.text)}</em>
-            </span>
-          </button>
-        `).join("")}
-      </div>
-    </div>
-    <div class="discover-live-section">
-      <div class="${TW.discoverRecHead}">
         <h3 class="text-[17px] font-bold text-ink">可加入的局</h3>
         <span class="discover-section-count">${liveDemands.length} 个可加入</span>
       </div>
@@ -2195,36 +2178,6 @@ function updateDiscoverRecommend() {
               <button type="button" data-join-demand="${escapeHTML(d.demand_id)}">加入</button>
             </div>`;
         }).join("") || `<p class="${TW.muted}" style="font-size:12px;">当前筛选下暂无可加入的局，点地图商家可以快速匹配。</p>`}
-      </div>
-    </div>
-    <div class="discover-live-section">
-      <div class="${TW.discoverRecHead}">
-        <h3 class="text-[17px] font-bold text-ink">地图上的地点</h3>
-        <span class="discover-section-count">按当前筛选</span>
-      </div>
-      <div class="${TW.discoverRecList}">
-      ${list.slice(0, 4).map((p) => {
-        const walkMin = Math.max(3, Math.round(Number(p.distance_km || 0.8) * 12));
-        const active = appState.selectedPOI?.poi_id === p.poi_id;
-        const wait = Number(p.wait_time_min || 0);
-        const waitLabel = wait <= 3 ? "免排队" : wait <= 12 ? `${wait}min 等位` : "先锁时间";
-        return `
-          <button type="button" class="${TW.discoverRecRow} ${active ? "is-active" : ""}" data-rec-poi="${p.poi_id}">
-            <span class="${TW.discoverRecThumb}" style="background-image:url('${poiCoverImage(p)}')"></span>
-            <span class="${TW.discoverRecBody}">
-              <span class="discover-rec-top">
-                <b>${escapeHTML(p.name)}</b>
-                <em>${escapeHTML(waitLabel)}</em>
-              </span>
-              <small>${escapeHTML(p.sub_category)} · ${walkMin} 分钟可达</small>
-              <span class="discover-rec-metrics">
-                <i>${p.buddy_demand_count} 人想约</i>
-                <i>${p.rating} 分</i>
-              </span>
-            </span>
-            <span class="${TW.discoverRecChev}">›</span>
-          </button>`;
-      }).join("")}
       </div>
     </div>`;
   el.querySelectorAll("[data-feed-poi]").forEach((btn) => {
