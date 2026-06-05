@@ -725,7 +725,6 @@
 
 .map-pins-layer .map-pin {
   position: absolute;
-  border: 0;
   cursor: pointer;
   font: inherit;
   color: inherit;
@@ -881,86 +880,131 @@
 /* ---------- 地图 pin（扁平气泡） ---------- */
 .fake-map > .map-pin,
 .map-pins-layer .map-pin,
+/* ============================================================
+   小红书风格 Map Pin — 白色圆角胶囊 + emoji + 商家名
+   ============================================================ */
 .map-pin {
   position: absolute;
   z-index: 4;
-  min-width: 46px;
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  background: #fff;
-  border: 1.5px solid rgba(255, 255, 255, 0.86);
-  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.12);
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 7px 3px 3px;
-  transform-origin: center;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-}
-
-.map-pin .scene-icon.xs {
-  box-shadow: none;
-  width: 20px;
-  height: 20px;
-  min-width: 20px;
-  font-size: 10px;
-}
-
-.pin-count {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  font-weight: 800;
-  line-height: 1;
-  color: #1f2937;
-}
-.pin-count b { font-size: 12px; }
-.pin-count small {
-  font-size: 9px;
-  color: #6b7280;
-  font-weight: 700;
-}
-
-.map-pin em {
-  position: absolute;
-  top: -8px;
-  right: -4px;
+  gap: 5px;
+  padding: 5px 11px 5px 8px;
+  transform: translate(-50%, -50%);
   border-radius: 999px;
-  background: #FF2442;
-  color: #fff;
-  font-style: normal;
-  font-size: 9px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1.5px solid rgba(255, 255, 255, 0.85);
+  box-shadow:
+    0 2px 8px rgba(15, 23, 42, 0.12),
+    0 1px 2px rgba(15, 23, 42, 0.06);
+  transform-origin: center;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  white-space: nowrap;
+}
+.map-pin:hover, .map-pin:focus-visible {
+  transform: translate(-50%, -50%) scale(1.06);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.16), 0 1px 3px rgba(15, 23, 42, 0.08);
+  outline: none;
+}
+
+/* Category emoji */
+.pin-emoji {
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* Merchant name label */
+.pin-label {
+  font-size: 12px;
   font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+/* Hot indicator — tiny red dot top-right */
+.pin-hot-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #FF2442;
+  border: 2px solid #fff;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+/* AI badge — gold pill top-right */
+.pin-ai-badge {
+  position: absolute;
+  top: -9px;
+  right: 2px;
+  background: #FFC400;
+  color: #1a1a1a;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 900;
   padding: 2px 5px;
+  border-radius: 999px;
+  line-height: 1.2;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(255,196,0,0.5);
 }
 
+/* Hot pin — just white with very subtle warm tint, hot dot does the talking */
 .map-pin.is-hot {
-  background: #fffafa;
-  border-color: rgba(255, 36, 66, 0.34);
-  box-shadow:
-    0 0 0 3px rgba(255, 36, 66, 0.12),
-    0 8px 20px rgba(255, 36, 66, 0.16);
+  background: rgba(255, 255, 255, 0.98);
 }
 
+/* AI pin — gold border */
 .map-pin.is-ai {
-  background: #fffdf0;
-  border-color: #f5c800;
-  border-width: 1.5px;
+  border-color: #FFC400;
   box-shadow:
-    0 0 0 4px rgba(255, 224, 51, 0.34),
-    0 9px 24px rgba(15, 23, 42, 0.16);
+    0 0 0 3px rgba(255, 196, 0, 0.22),
+    0 4px 16px rgba(15, 23, 42, 0.12);
   z-index: 6;
 }
 
+/* Selected pin — enlarged, high contrast, brand yellow */
+.map-pin.is-selected {
+  transform: translate(-50%, -50%) scale(1.14);
+  background: #1a1a1a;
+  border-color: #FFC400;
+  border-width: 2px;
+  box-shadow:
+    0 0 0 3px rgba(255, 196, 0, 0.35),
+    0 8px 24px rgba(15, 23, 42, 0.22);
+  z-index: 8;
+}
+.map-pin.is-selected .pin-label {
+  color: #fff;
+}
+.map-pin.is-selected .pin-emoji {
+  filter: brightness(1.1);
+}
+.map-pin.is-selected .pin-hot-dot {
+  border-color: #1a1a1a;
+}
+.map-pin.is-selected .pin-ai-badge {
+  background: #FFC400;
+}
+
+/* Legacy: hide old elements if they sneak in */
+.pin-count, .pin-name, .pin-match, .pin-ai-score,
+.map-pin .scene-icon.xs { display: none !important; }
+
+/* PLACEHOLDER — old pin-ai-score kept for grep compatibility */
 .pin-ai-score {
+  display: none;
   font-size: 10px;
   font-weight: 900;
   color: #1a1a1a;
-  background: #ffe033;
-  border-radius: 999px;
-  padding: 2px 5px;
-  white-space: nowrap;
 }
 
 .map-pin.is-selected:not(.discover-pin) {
@@ -4822,103 +4866,30 @@ body:not(.has-developer-controls) .dev-details {
 #refDiscoverRoot .map-grid {
   opacity: 0.66;
 }
+/* mapmaker-pin inherits .map-pin XHS style — just set animation and z-index */
 .map-pin.mapmaker-pin,
 .map-pins-layer .map-pin.mapmaker-pin {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  width: auto;
-  height: auto;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  box-shadow: none;
-  transform: translate(-50%, -50%);
-  cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
   z-index: 8;
   animation: mapmakerPinFloat 3.8s ease-in-out var(--float-delay, 0s) infinite;
 }
-.mapmaker-pin-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 46px;
-  min-height: 30px;
-  padding: 5px 8px;
-  border: 2px solid rgba(255, 255, 255, 0.96);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.95);
-  color: #111827;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
-  backdrop-filter: blur(8px);
-}
-.mapmaker-pin-badge b {
-  display: inline-grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--pin-bg, #fff4ed);
-  color: var(--pin-color, #ff6b35);
-  font-size: 13px;
-  font-weight: 950;
-  line-height: 1;
-}
-.mapmaker-pin-badge em {
-  color: #374151;
-  font-size: 13px;
-  font-style: normal;
-  font-weight: 950;
-  line-height: 1;
-}
-.map-pin.mapmaker-pin.is-hot .mapmaker-pin-badge {
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--pin-color, #ff6b35) 15%, transparent), 0 8px 18px rgba(15, 23, 42, 0.18);
-}
 .map-pin.mapmaker-pin.is-selected {
   z-index: 18;
-  transform: translate(-50%, -50%) scale(1.05);
   animation: none;
-}
-.map-pin.mapmaker-pin.is-selected .mapmaker-pin-badge {
-  min-height: 36px;
-  border-color: #ffe033;
-  background: #111827;
-  color: #fff;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
-}
-.map-pin.mapmaker-pin.is-selected .mapmaker-pin-badge b {
-  background: #ffe033;
-  color: #111827;
-}
-.map-pin.mapmaker-pin.is-selected .mapmaker-pin-badge em {
-  color: #fff;
-}
-.mapmaker-pin-label {
-  max-width: 148px;
-  overflow: hidden;
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: rgba(17, 24, 39, 0.92);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
 }
 .map-pin.mapmaker-pin:hover,
 .map-pin.mapmaker-pin:focus-visible {
   outline: none;
   z-index: 20;
 }
+/* When a pin is selected, dim others slightly */
 .map-pins-layer:has(.mapmaker-pin.is-selected) .mapmaker-pin:not(.is-selected) {
-  opacity: 0.78;
+  opacity: 0.72;
+  transform: translate(-50%, -50%) scale(0.94);
 }
+/* Legacy selectors no longer generate these elements, hide if stale */
+.mapmaker-pin-badge, .mapmaker-pin-label { display: none; }
 .discover-live-section {
   margin-top: 14px;
   padding: 14px;

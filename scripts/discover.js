@@ -254,25 +254,19 @@ function isHotPoi(poi) {
   return Number(poi.hot_score || 0) > 80 || Number(poi.buddy_demand_count || 0) >= 7;
 }
 
+const CATEGORY_EMOJI = {
+  餐厅: "🍜", KTV: "🎤", 酒吧: "🍸", 咖啡: "☕",
+  夜宵: "🌙", 攀岩: "🧗", 骑行: "🚴", 桌游: "🎲"
+};
+function poiEmoji(poi) { return CATEGORY_EMOJI[poi.category] || "📍"; }
+function truncName(name, max = 6) { return name.length > max ? name.slice(0, max) + "…" : name; }
+
 function pinSummaryHTML(poi, matchScore) {
-  if (matchScore) {
-    return `
-      <span class="pin-ai-score">AI ${matchScore}</span>
-      <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
-      <span class="pin-name">${escapeHTML(poi.name)}</span>
-    `;
-  }
-  if (isHotPoi(poi)) {
-    return `
-      <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
-      <em>热</em>
-      <span class="pin-name">${escapeHTML(poi.name)}</span>
-    `;
-  }
-  return `
-    <span class="pin-count"><b>${poi.buddy_demand_count}</b><small>想约</small></span>
-    <span class="pin-name">${escapeHTML(poi.name)}</span>
-  `;
+  const emoji = poiEmoji(poi);
+  const name = escapeHTML(truncName(poi.name));
+  const hotDot = isHotPoi(poi) ? `<i class="pin-hot-dot"></i>` : "";
+  const aiBadge = matchScore ? `<i class="pin-ai-badge">AI</i>` : "";
+  return `${hotDot}${aiBadge}<span class="pin-emoji">${emoji}</span><span class="pin-label">${name}</span>`;
 }
 
 const MAP_CLUSTER_DEFS = [
@@ -1478,9 +1472,8 @@ function renderLeafletPins() {
 
     const icon = window.L.divIcon({
       className: "leaflet-poi-icon",
-      html: `<div class="${cls}" style="position:absolute;transform:translate(-50%,-50%);--pin-color:${g.accent};--pin-bg:${g.bg};"
+      html: `<div class="${cls}" style="position:absolute;transform:translate(-50%,-50%);"
         data-poi-id="${poi.poi_id}" tabindex="-1" role="button" aria-label="${escapeHTML(poi.name)}">
-        ${sceneIcon(categoryAbbr(poi), g.accent, g.bg, "xs")}
         ${pinSummaryHTML(poi, matchScore)}
       </div>`,
       iconSize: [0, 0],
@@ -1818,32 +1811,26 @@ const DISCOVER_PIN_MARKER_SVG = `<svg class="discover-pin-drop-svg" viewBox="0 0
 function discoverMapPinHTML(poi, index) {
   const isSelected = isDiscoverPinSelected(poi);
   const pos = poiMapPercent(poi);
-  const hot = isHotPoi(poi) || Number(poi.buddy_demand_count || 0) >= 5;
+  const hot = isHotPoi(poi);
   const g = poiPhotoGradient(poi);
-  const count = Number(poi.buddy_demand_count || 0);
-  const abbr = categoryAbbr(poi);
   return `
     <button type="button" class="map-pin discover-pin mapmaker-pin ${hot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} pin-enter"
       data-poi-id="${poi.poi_id}"
       style="left:${pos.x}%;top:${pos.y}%;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 4) * 0.14}s"
-      aria-label="${escapeHTML(poi.name)}，${count} 人想约">
-      <span class="mapmaker-pin-badge" aria-hidden="true"><b>${escapeHTML(abbr)}</b><em>${count}</em></span>
-      ${isSelected ? `<span class="mapmaker-pin-label">${escapeHTML(poi.name)}</span>` : ""}
+      aria-label="${escapeHTML(poi.name)}">
+      ${pinSummaryHTML(poi, null)}
     </button>`;
 }
 
 function discoverAmapPinHTML(poi, index) {
   const isSelected = isDiscoverPinSelected(poi);
-  const hot = isHotPoi(poi) || Number(poi.buddy_demand_count || 0) >= 5;
+  const hot = isHotPoi(poi);
   const g = poiPhotoGradient(poi);
-  const count = Number(poi.buddy_demand_count || 0);
-  const abbr = categoryAbbr(poi);
   return `
     <div class="map-pin discover-pin mapmaker-pin ${hot ? "is-hot" : ""} ${isSelected ? "is-selected" : ""} pin-enter"
          style="cursor:pointer;--pin-color:${g.accent};--pin-bg:${g.bg};--float-delay:${(index % 4) * 0.14}s"
-         title="${escapeHTML(poi.name)}，${count} 人想约">
-      <span class="mapmaker-pin-badge" aria-hidden="true"><b>${escapeHTML(abbr)}</b><em>${count}</em></span>
-      ${isSelected ? `<span class="mapmaker-pin-label">${escapeHTML(poi.name)}</span>` : ""}
+         title="${escapeHTML(poi.name)}">
+      ${pinSummaryHTML(poi, null)}
     </div>`;
 }
 
