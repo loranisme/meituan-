@@ -1979,13 +1979,17 @@ body.is-match-page .header-bell { display: none !important; }
   align-items: flex-start;
   gap: 10px;
   background: #fff;
-  border: 1px solid #EBEBEB;
-  border-radius: 18px;
-  padding: 14px 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-  margin-bottom: 14px;
+  border: 1.5px solid #EBEBEB;
+  border-radius: 20px;
+  padding: 16px 16px 16px 18px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  margin-bottom: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.match-input-wrap:focus-within { border-color: rgba(31, 31, 31, 0.18); }
+.match-input-wrap:focus-within {
+  border-color: #FFC400;
+  box-shadow: 0 0 0 3px rgba(255,196,0,0.14), 0 2px 12px rgba(0,0,0,0.06);
+}
 .match-input-icon,
 .match-input-ai {
   flex-shrink: 0;
@@ -1997,16 +2001,17 @@ body.is-match-page .header-bell { display: none !important; }
 .match-input-ai { color: #FFC400; }
 .match-input-wrap textarea {
   flex: 1;
-  min-height: 52px;
+  min-height: 68px;
   border: 0;
   background: transparent;
   resize: none;
   outline: none;
   font-size: 15px;
-  line-height: 1.45;
+  line-height: 1.5;
   color: #1F1F1F;
+  font-family: inherit;
 }
-.match-input-wrap textarea::placeholder { color: #BDBDBD; }
+.match-input-wrap textarea::placeholder { color: #C8C8C8; font-size: 15px; }
 
 .match-ai-tags { margin-bottom: 18px; }
 .match-ai-tags-label {
@@ -2136,37 +2141,73 @@ body.is-match-page .header-bell { display: none !important; }
   text-align: center;
 }
 
-.match-inspire { margin-bottom: 8px; }
-.match-inspire h3 {
-  font-size: 15px;
-  font-weight: 800;
-  margin-bottom: 12px;
-  color: #1F1F1F;
-}
-.match-inspire-scroll {
+/* ── AI 理解为（只在用户真实输入后显示）── */
+.match-ai-tags-header {
   display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-  scrollbar-width: none;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 10px;
 }
-.match-inspire-scroll::-webkit-scrollbar { display: none; }
-.match-inspire-chip {
-  flex-shrink: 0;
-  padding: 8px 16px;
-  border-radius: 999px;
+.match-ai-spark {
+  color: #FFC400;
+  font-size: 13px;
+  line-height: 1;
+}
+.match-ai-tags .match-ai-tags-label {
+  font-size: 12px;
+  color: #757575;
+  font-weight: 700;
+  margin: 0;
+}
+.match-tag--green { background: #ECFDF5; color: #065F46; }
+
+/* ── 场景灵感磁贴（3列网格）── */
+.match-inspire { margin-bottom: 8px; }
+.match-inspire-label {
+  font-size: 12px;
+  color: #9CA3AF;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+.match-inspire-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.match-inspire-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 8px;
+  border-radius: 16px;
   border: 1.5px solid #EBEBEB;
   background: #fff;
-  color: #757575;
-  font-size: 13px;
-  font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
-  transition: border-color 0.15s, color 0.15s;
+  transition: border-color 0.15s, background 0.15s, transform 0.12s;
+  font: inherit;
 }
-.match-inspire-chip:active {
+.match-inspire-tile:active {
   border-color: #FFC400;
+  background: #FFFEF0;
+  transform: scale(0.96);
+}
+.match-inspire-emoji {
+  font-size: 22px;
+  line-height: 1;
+  display: block;
+}
+.match-inspire-name {
+  font-size: 13px;
+  font-weight: 700;
   color: #1F1F1F;
+  line-height: 1;
+}
+.match-inspire-desc {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-weight: 500;
 }
 
 /* 偏好详情抽屉 */

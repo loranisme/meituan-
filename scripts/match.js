@@ -600,11 +600,12 @@ async function appendGCPeerReply(gc, messageText) {
 }
 
 const MATCH_INSPIRE_PROMPTS = [
-  { label: "喝咖啡", prompt: "周末想找安静的人一起喝咖啡学习，预算 40 元以内。" },
-  { label: "桌游", prompt: "今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。" },
-  { label: "KTV", prompt: "今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。" },
-  { label: "city walk", prompt: "今天想 city walk，找个人一起散步聊天，预算 50 元以内。" },
-  { label: "运动", prompt: "压力有点大，想找个新手友好的攀岩搭子，预算 120 元以内。" }
+  { label: "喝咖啡", emoji: "☕", desc: "安静坐一下", prompt: "周末想找安静的人一起喝咖啡，预算 40 元以内，不尴尬就好。" },
+  { label: "吃个饭", emoji: "🍜", desc: "找饭搭子", prompt: "今晚想找一个人一起吃饭，预算 80 元以内，轻松聊聊。" },
+  { label: "桌游局", emoji: "🎲", desc: "轻松破冰", prompt: "今晚狼人阿瓦隆桌游，3-4 人，预算 70 元以内，轻松破冰。" },
+  { label: "KTV", emoji: "🎤", desc: "热闹一起嗨", prompt: "今晚想找几个人去 KTV，人均 100 元以内，气氛热闹一点。" },
+  { label: "夜骑", emoji: "🚴", desc: "吹风散心", prompt: "今晚想夜骑，找个节奏轻松的搭子，不要太快。" },
+  { label: "攀岩", emoji: "🧗", desc: "新手也行", prompt: "压力有点大，想找个新手友好的攀岩搭子，预算 120 元以内。" }
 ];
 
 function matchTagIcon(type) {
@@ -622,27 +623,24 @@ function matchTagIcon(type) {
 }
 
 function buildAITags() {
-  const intent = appState.parsedIntent || (appState.userInput.trim() && parseIntent ? parseIntent(appState.userInput) : null);
-  const mem = appState.agentMemory;
+  // Only show tags when user has actually run the AI — never from memory defaults
+  const intent = appState.parsedIntent;
+  if (!intent || !appState.aiHasRun) return [];
   const tags = [];
-  if (intent) {
-    const category = intent.category_preference;
-    if (category && category !== "餐饮") {
-      tags.push({ label: category, tone: "orange", icon: "food" });
-    } else if (/韩餐|饭/.test(appState.userInput)) {
-      tags.push({ label: "韩餐", tone: "orange", icon: "food" });
-    }
-    if (intent.budget_max) tags.push({ label: `${intent.budget_max}元以内`, tone: "yellow", icon: "coin" });
-    if (intent.group_size) tags.push({ label: intent.group_size, tone: "blue", icon: "people" });
-    const social = intent.social_style === "轻松聊天" ? "轻社交" : intent.social_style;
-    tags.push({ label: social, tone: "sand", icon: "smile" });
-  } else if (mem) {
-    tags.push({ label: mem.preferred_scenes.slice(0, 2).join(" · ") || "韩餐", tone: "orange", icon: "food" });
-    tags.push({ label: `${mem.default_budget_range[1]}元以内`, tone: "yellow", icon: "coin" });
-    tags.push({ label: "1v1", tone: "blue", icon: "people" });
-    tags.push({ label: "轻社交", tone: "sand", icon: "smile" });
+  const category = intent.category_preference;
+  if (category && category !== "餐饮") {
+    tags.push({ label: category, tone: "orange", icon: "food" });
+  } else if (intent.activity_type && intent.activity_type !== "饭搭子") {
+    tags.push({ label: intent.activity_type.replace("搭子", ""), tone: "orange", icon: "food" });
   }
-  return tags.slice(0, 4);
+  if (intent.budget_max) tags.push({ label: `¥${intent.budget_max}以内`, tone: "yellow", icon: "coin" });
+  if (intent.group_size) tags.push({ label: intent.group_size, tone: "blue", icon: "people" });
+  const social = intent.social_style === "轻松聊天" ? "轻社交" : intent.social_style;
+  if (social) tags.push({ label: social, tone: "sand", icon: "smile" });
+  if (intent.distance_tolerance_km && intent.distance_tolerance_km < 2) {
+    tags.push({ label: `${intent.distance_tolerance_km}km内`, tone: "green", icon: "pin" });
+  }
+  return tags.slice(0, 5);
 }
 
 function matchGreetingTime() {
@@ -919,8 +917,11 @@ function renderAITagPills() {
   const tags = buildAITags();
   if (!tags.length) return "";
   return `
-    <div class="match-ai-tags">
-      <p class="match-ai-tags-label">✨ AI 理解为</p>
+    <div class="match-ai-tags result-fade">
+      <div class="match-ai-tags-header">
+        <span class="match-ai-spark">✦</span>
+        <span class="match-ai-tags-label">Agent 理解为</span>
+      </div>
       <div class="match-tag-row">
         ${tags.map((tag) => `
           <span class="match-tag match-tag--${tag.tone}">
@@ -1136,10 +1137,14 @@ function renderAIPage() {
       ${focusedResults ? "" : renderRecentPreferencesCard()}
 
       ${focusedResults ? "" : `<section class="match-inspire">
-        <h3>灵感推荐</h3>
-        <div class="match-inspire-scroll">
+        <p class="match-inspire-label">或者直接选一个</p>
+        <div class="match-inspire-grid">
           ${MATCH_INSPIRE_PROMPTS.map((item) => `
-            <button type="button" class="match-inspire-chip" data-prompt="${escapeHTML(item.prompt)}">${escapeHTML(item.label)}</button>
+            <button type="button" class="match-inspire-tile" data-prompt="${escapeHTML(item.prompt)}">
+              <span class="match-inspire-emoji">${item.emoji}</span>
+              <span class="match-inspire-name">${escapeHTML(item.label)}</span>
+              <span class="match-inspire-desc">${escapeHTML(item.desc)}</span>
+            </button>
           `).join("")}
         </div>
       </section>`}
@@ -1169,7 +1174,9 @@ function renderAIPage() {
     button.addEventListener("click", () => {
       appState.userInput = button.dataset.prompt;
       appState.poiConstraint = null;
-      runAI();
+      // Briefly animate the tile
+      button.style.transform = "scale(0.94)";
+      setTimeout(() => { button.style.transform = ""; runAI(); }, 120);
     });
   });
   $$("#aiPage [data-invite-match]").forEach((button) => {
