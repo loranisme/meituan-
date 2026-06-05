@@ -1692,7 +1692,7 @@ function showGroupInviteModal(match) {
     document.getElementById("inviteSend").addEventListener("click", () => {
       overlay.remove();
       const matchWithTime = { ...match, suggested_time: currentTime };
-      showMatchSuccessAnimation(matchWithTime);
+      selectMatch(matchWithTime);
     });
     document.getElementById("inviteChangeTime").addEventListener("click", () => {
       const idx = TIME_SLOTS.indexOf(currentTime);
