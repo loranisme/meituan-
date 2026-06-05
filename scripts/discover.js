@@ -2207,17 +2207,17 @@ function updateDiscoverRecommend() {
             const walkMin = poi ? Math.max(2, Math.round((poi.distance_km || 1) * 12)) : "?";
             const dealText = poi ? merchantDealShort(poi) : "";
             return `
-              <button type="button" class="djl-row" data-join-demand="${escapeHTML(d.demand_id)}">
+              <button type="button" class="djl-row ${d.isMyDemand ? "djl-row-mine" : ""}" data-join-demand="${escapeHTML(d.demand_id)}">
                 <span class="djl-avatar" style="background:${bg};color:${color};">${escapeHTML(nickname[0])}</span>
                 <span class="djl-body">
                   <span class="djl-row-top">
                     <b>${escapeHTML(poi?.name || "附近地点")}</b>
-                    <em>${escapeHTML(d.target_time || "今晚")}</em>
+                    ${d.isMyDemand ? `<span class="djl-mine-badge">我发起</span>` : `<em>${escapeHTML(d.time || d.target_time || "今晚")}</em>`}
                   </span>
                   <span class="djl-row-sub">${escapeHTML(d.activity_type || "搭子")} · ¥${d.budget_min}–${d.budget_max} · 步行 ${walkMin} 分钟</span>
                   ${dealText ? `<span class="djl-deal-tag">${escapeHTML(dealText)}</span>` : ""}
                 </span>
-                <span class="djl-join-btn">加入</span>
+                ${d.isMyDemand ? `<span class="djl-mine-status">等待中</span>` : `<span class="djl-join-btn">加入</span>`}
               </button>`;
           }).join("")}
         </div>
@@ -2492,12 +2492,29 @@ function bindCreateTabListeners(poi) {
   // Submit
   document.getElementById("createSessionSubmit")?.addEventListener("click", () => {
     const time = document.getElementById("createTimeCustom")?.value || "今晚 19:30";
-    const size = document.getElementById("createGroupInput")?.value || "2";
-    const budget = document.getElementById("createBudgetInput")?.value || poi.avg_price;
+    const size = Number(document.getElementById("createGroupInput")?.value || 2);
+    const budget = Number(document.getElementById("createBudgetInput")?.value || poi.avg_price);
     const style = el.querySelector(".create-style-opt.is-active")?.dataset.style || "轻松聊天";
-    showToast(`已在 ${poi.name} 发起 ${size} 人局 · ${time} · ¥${budget} 以内 · ${style}`);
+    const me = window.mockData?.currentUser || {};
+    const newDemand = {
+      demand_id: `user_created_${Date.now()}`,
+      poi_id: poi.poi_id,
+      nickname: me.nickname || "我",
+      demandUser: me,
+      time,
+      style,
+      size: size > 1 ? `${size} 人` : "1v1",
+      note: `${categoryToActivity(poi)} · ¥${budget} 以内 · ${style}`,
+      budget_min: Math.max(0, budget - 10),
+      budget_max: budget,
+      activity_type: categoryToActivity(poi),
+      isMyDemand: true
+    };
+    appState.userCreatedDemands.unshift(newDemand);
     appState.poiSheetTab = "demands";
     updatePOISheet();
+    updateDiscoverRecommend();
+    showToast(`已在 ${poi.name} 发起局，快来找搭子吧 🎉`);
   });
 }
 
@@ -2516,14 +2533,18 @@ function opportunitySummaryForPoi(poi) {
 function refDemandRowHTML(demand) {
   const user = demand.demandUser || {};
   const verified = user.verified_status;
+  const { bg, color } = avatarHashColor(demand.demand_id || demand.nickname || "?");
   return `
-    <button type="button" class="${TW.refLiveRow}" data-demand="${demand.demand_id}">
-      <span class="${TW.refLiveAvatar}">${escapeHTML(String(demand.nickname || "搭")[0])}</span>
+    <button type="button" class="${TW.refLiveRow} ${demand.isMyDemand ? "ref-live-row-mine" : ""}" data-demand="${demand.demand_id}">
+      <span class="${TW.refLiveAvatar}" style="background:${bg};color:${color};">${escapeHTML(String(demand.nickname || "搭")[0])}</span>
       <span class="${TW.refLiveBody}">
-        <b>${escapeHTML(demand.time || "今晚")} · ${escapeHTML(demand.size || "1v1")}${verified ? `<span class="${TW.refVerified}">已验证</span>` : ""}</b>
+        <b>${escapeHTML(demand.time || "今晚")} · ${escapeHTML(demand.size || "1v1")}
+          ${demand.isMyDemand ? `<span style="font-size:10px;background:#FFF8CC;color:#92700a;border-radius:4px;padding:1px 5px;margin-left:4px;">我发起</span>` : ""}
+          ${verified && !demand.isMyDemand ? `<span class="${TW.refVerified}">已验证</span>` : ""}
+        </b>
         <p>${escapeHTML(demand.note || demand.style || "轻松组局")}</p>
       </span>
-      <span class="${TW.refLiveJoin}">加入</span>
+      <span class="${TW.refLiveJoin}">${demand.isMyDemand ? "等待中" : "加入"}</span>
     </button>
   `;
 }
@@ -2548,6 +2569,9 @@ function demandCardHTML(demand, isSelected) {
 }
 
 function getFakeDemands(poi) {
+  // User-created demands for this POI come first
+  const userCreated = (appState.userCreatedDemands || []).filter((d) => d.poi_id === poi.poi_id);
+
   const real = buddyDemands
     .filter((d) => d.poi_id === poi.poi_id)
     .slice(0, 3)
@@ -2564,7 +2588,7 @@ function getFakeDemands(poi) {
         note: `${d.activity_type} · ¥${d.budget_max} 以内`
       };
     });
-  if (real.length) return real;
+  if (userCreated.length || real.length) return [...userCreated, ...real].slice(0, 4);
 
   const count = Math.min(poi.buddy_demand_count, 3);
   const seed = parseInt(poi.poi_id.replace(/\D/g, "")) || 1;

@@ -116,6 +116,7 @@ const appState = {
   mapExpandedClusterId: null,
   mapManualPOI: false,
   poiSheetTab: "demands",
+  userCreatedDemands: [],
   agentMemory: null,
   agentMemoryNotice: "",
   agentFeedbackLog: [],

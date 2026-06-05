@@ -5814,6 +5814,38 @@ body:not(.has-developer-controls) .dev-details {
   user-select: none;
 }
 
+/* 我发起的局 — 高亮状态 */
+.djl-row-mine {
+  background: #FFFDF0;
+  box-shadow: 0 0 0 1.5px #FFC400, 0 2px 8px rgba(255,196,0,0.15);
+}
+.djl-mine-badge {
+  font-size: 11px;
+  font-weight: 800;
+  background: #FFC400;
+  color: #1a1a1a;
+  border-radius: 6px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+.djl-mine-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #f0f0f0;
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ref-live-row-mine {
+  background: #FFFDF0;
+  border-color: rgba(255,196,0,0.4) !important;
+}
+
 /* 地图骨架屏 */
 .map-skeleton-loader {
   position: absolute;
