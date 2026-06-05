@@ -138,6 +138,7 @@ function applyMoodIntentPatch(intent, mood, input) {
   if (shouldPatchActivity && mood.recommended_activity) {
     next.activity_type = mood.recommended_activity;
     next.category_preference = mood.recommended_category;
+    next.category_explicit = true; // 情绪推断的品类作为硬约束，防止被下游覆盖
     next.group_size = mood.energy === "高" ? "小组" : "1v1";
     next.social_style = mood.social_style;
     next.budget_min = Math.min(next.budget_min || 20, mood.recommended_category === "咖啡" ? 20 : 40);
@@ -283,10 +284,23 @@ function buildAIDirectorPayload(availablePOIs) {
     deal_text: poi.deal_text,
     venue_extra: poi.venue_extra || null
   }));
+  const mood = appState.aiMoodProfile;
+  const emotionContext = mood && mood.mood_label !== "需求明确" ? {
+    detected_emotion: mood.mood_label,
+    energy_level: mood.energy,
+    recommended_activity: mood.recommended_activity,
+    recommended_category: mood.recommended_category,
+    emotion_confidence: mood.confidence,
+    user_state: mood.user_state,
+    activity_strategy: mood.activity_strategy,
+    is_emotion_driven: true
+  } : null;
+
   return {
     area,
     user_input: appState.userInput,
     parsed_intent: appState.parsedIntent,
+    emotion_context: emotionContext, // explicit emotion signal for Gemini
     mood_profile: appState.aiMoodProfile,
     sparse_mode: appState.sparseMode,
     all_poi_catalog: poiCatalog,
@@ -431,9 +445,19 @@ async function enrichWithAIDirector(availablePOIs, options = {}) {
     }
 
     if (director.intent_patch && !options.skipIntentPatch) {
+      const isEmotionBased = appState.parsedIntent?.parse_layer === "emotion_enriched";
+      // If the intent was emotion-enriched, protect the mood-derived category from being overridden
+      const emotionGuard = isEmotionBased ? {
+        activity_type: appState.parsedIntent.activity_type,
+        category_preference: appState.parsedIntent.category_preference,
+        category_explicit: true,
+        social_style: appState.parsedIntent.social_style,
+        group_size: appState.parsedIntent.group_size
+      } : {};
       appState.parsedIntent = {
         ...appState.parsedIntent,
         ...director.intent_patch,
+        ...emotionGuard, // emotion layer wins over Gemini override
         parse_layer: "agent_enriched",
         parse_confidence: director.intent_patch.confidence ?? appState.parsedIntent.parse_confidence
       };
