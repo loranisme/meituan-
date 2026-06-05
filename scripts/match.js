@@ -1692,7 +1692,7 @@ function showGroupInviteModal(match) {
     document.getElementById("inviteSend").addEventListener("click", () => {
       overlay.remove();
       const matchWithTime = { ...match, suggested_time: currentTime };
-      selectMatch(matchWithTime);
+      showMatchSuccessAnimation(matchWithTime);
     });
     document.getElementById("inviteChangeTime").addEventListener("click", () => {
       const idx = TIME_SLOTS.indexOf(currentTime);
@@ -1702,4 +1702,102 @@ function showGroupInviteModal(match) {
   }
 
   renderModal();
+}
+
+function showMatchSuccessAnimation(match) {
+  // Set up chat state before showing overlay (so chat is ready when user taps)
+  appState.selectedMatch = { ...match };
+  appState.depositSheetVisible = false;
+  appState.depositAgreementChecked = false;
+  appState.depositLocked = false;
+  appState.selectedDeal = null;
+  appState.fallbackSuggestion = "";
+  appState.debugMeta = match.concurrency || appState.debugMeta;
+  setPlanStatus(PLAN_STATUS.MATCHED);
+  appState.pendingSuccess = false;
+  appState.replanningNotice = "";
+  appState.chatThread = buildChatThread(appState.selectedMatch);
+  appState.viewingGroupChatId = "__active__";
+
+  const me = window.mockData?.currentUser || {};
+  const myInitial = (me.nickname || "我")[0];
+  const theirInitial = match.user.nickname[0];
+  const activity = match.intent?.activity_type || "饭搭子";
+  const actEmoji = { KTV搭子: "🎤", 咖啡搭子: "☕", 酒吧搭子: "🍸", 夜宵搭子: "🌙", 攀岩搭子: "🧗", 骑行搭子: "🚴", 桌游搭子: "🎲" }[activity] || "🍜";
+
+  // Generate confetti particles
+  const CONFETTI_COLORS = ["#FFC400", "#FF6B35", "#22A06B", "#FF2442", "#8B5CF6", "#2F7EF7", "#fff"];
+  const confetti = Array.from({ length: 24 }, (_, i) => {
+    const color = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+    const isCircle = i % 3 === 1;
+    const size = 6 + (i % 4) * 2;
+    return `<div class="mso-particle" style="
+      left:${(i * 4.2 + 1) % 100}%;
+      width:${size}px;height:${size}px;
+      background:${color};
+      border-radius:${isCircle ? "50%" : "3px"};
+      animation-delay:${(i * 0.13).toFixed(2)}s;
+      animation-duration:${(2.2 + (i % 5) * 0.3).toFixed(1)}s;
+    "></div>`;
+  }).join("");
+
+  const overlay = document.createElement("div");
+  overlay.id = "matchSuccessOverlay";
+  overlay.className = "mso-overlay";
+  overlay.innerHTML = `
+    <div class="mso-bg">
+      <div class="mso-confetti" aria-hidden="true">${confetti}</div>
+
+      <div class="mso-avatars">
+        <div class="mso-avatar mso-avatar-left">
+          <div class="mso-ring mso-ring-me">${escapeHTML(myInitial)}</div>
+          <span class="mso-avatar-name">我</span>
+        </div>
+        <div class="mso-spark-wrap">
+          <div class="mso-spark">${actEmoji}</div>
+          <div class="mso-spark-glow"></div>
+        </div>
+        <div class="mso-avatar mso-avatar-right">
+          <div class="mso-ring mso-ring-them">${escapeHTML(theirInitial)}</div>
+          <span class="mso-avatar-name">${escapeHTML(match.user.nickname)}</span>
+        </div>
+      </div>
+
+      <div class="mso-text-block">
+        <h1 class="mso-title">成局了！</h1>
+        <p class="mso-subtitle">${escapeHTML(match.user.nickname)} 接受了你的邀约</p>
+      </div>
+
+      <div class="mso-poi-card">
+        <span class="mso-poi-icon">📍</span>
+        <div>
+          <b>${escapeHTML(match.poi.name)}</b>
+          <p>${escapeHTML(match.suggested_time)} · ¥${match.poi.avg_price}/人</p>
+        </div>
+      </div>
+
+      <button type="button" class="mso-cta" id="matchSuccessCTA">开始聊天 →</button>
+      <div class="mso-progress" id="matchSuccessProgress"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  function goToChat() {
+    if (overlay._gone) return;
+    overlay._gone = true;
+    overlay.classList.add("mso-exit");
+    setTimeout(() => {
+      overlay.remove();
+      setPage("chat");
+      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
+    }, 380);
+  }
+
+  document.getElementById("matchSuccessCTA").addEventListener("click", goToChat);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) goToChat(); });
+
+  const AUTO_MS = 3600;
+  const timer = setTimeout(goToChat, AUTO_MS);
+  // Cancel auto-advance if user taps CTA first
+  overlay.addEventListener("click", () => clearTimeout(timer), { once: true });
 }
