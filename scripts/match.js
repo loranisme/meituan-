@@ -1461,8 +1461,9 @@ function renderMatchResults() {
   }
   if (!appState.matchResults.length) return "";
   const showDevControls = canShowDeveloperControls();
+  // L0 banner only shown in developer mode — never exposed to regular demo users
   const fallbackBanner = appState.aiRuleFallback && appState.developerMode
-    ? `<div class="${TW.noticeCard}" style="background:#fffbeb;color:#92400e;">当前为 <b>规则层兜底</b>（L0），评分仍为本地真相源。</div>`
+    ? `<div class="${TW.noticeCard}" style="background:#fffbeb;color:#92400e;">当前为 <b>本地规则模式</b>，AI 暂时不可用，评分基于规则层。</div>`
     : "";
   return `
     <section class="result-section result-fade">
@@ -1553,26 +1554,33 @@ function renderMatchCard(match, index) {
       <div class="${TW.planCopy} plan-copy-card">
         <b>${escapeHTML(planTitle)}</b>
         <p>${escapeHTML(planCopy)}</p>
-        ${canShowDeveloperControls() && appState.developerMode && director.risk ? `<p style="margin-top:6px;color:#6b7280;">风险预判：${escapeHTML(director.risk)}</p>` : ""}
         ${director.conversion_prompt ? `<p class="plan-conversion-prompt">${escapeHTML(director.conversion_prompt)}</p>` : ""}
       </div>
-      ${canShowDeveloperControls() && appState.developerMode ? `<div class="${TW.adjustRow} dev-only">
-        <button class="${TW.textButton}" data-adjust="${index}" data-patch="cheaper">更便宜</button>
-        <button class="${TW.textButton}" data-adjust="${index}" data-patch="closer">更近</button>
-        <button class="${TW.textButton}" data-adjust="${index}" data-patch="quieter">更安静</button>
-        <button class="${TW.textButton}" data-adjust="${index}" data-patch="change_time">换时间</button>
-        <button class="${TW.textButton}" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
-      </div>
-      <div class="${TW.feedbackRow} dev-only">
-        <span style="font-size:11px;color:#9ca3af;align-self:center;">告诉我：</span>
-        <button class="${TW.feedbackChip} like" data-agent-feedback="like" data-feedback-plan="${index}">喜欢这个</button>
-        <button class="${TW.feedbackChip}" data-agent-feedback="too_far" data-feedback-plan="${index}">太远了</button>
-        <button class="${TW.feedbackChip}" data-agent-feedback="too_noisy" data-feedback-plan="${index}">太嘈杂</button>
-        <button class="${TW.feedbackChip}" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
-        <button class="${TW.feedbackChip}" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
-      </div>` : ""}
+      <!-- CTA 紧跟在方案文案后，最显眼位置 -->
+      <button class="${TW.primaryButton} ${TW.wide} match-invite-btn" data-invite-match="${index}" data-select-match="${index}">发出邀约</button>
+      <!-- 调节和反馈全部收进 details，减少默认视觉噪音 -->
+      ${canShowDeveloperControls() ? `
+      <details class="match-card-secondary-details" style="margin-top:8px;">
+        <summary style="cursor:pointer;font-size:12px;color:#9ca3af;font-weight:600;list-style:none;padding:4px 0;">
+          调节方案 / 告诉 Agent
+        </summary>
+        <div class="${TW.adjustRow}" style="margin-top:8px;">
+          <button class="${TW.textButton}" data-adjust="${index}" data-patch="cheaper">更便宜</button>
+          <button class="${TW.textButton}" data-adjust="${index}" data-patch="closer">更近</button>
+          <button class="${TW.textButton}" data-adjust="${index}" data-patch="quieter">更安静</button>
+          <button class="${TW.textButton}" data-adjust="${index}" data-patch="change_time">换时间</button>
+          <button class="${TW.textButton}" data-adjust="${index}" data-patch="verified_only">只看已验证</button>
+        </div>
+        <div class="${TW.feedbackRow}" style="margin-top:8px;">
+          <span style="font-size:11px;color:#9ca3af;align-self:center;">告诉我：</span>
+          <button class="${TW.feedbackChip} like" data-agent-feedback="like" data-feedback-plan="${index}">喜欢这个</button>
+          <button class="${TW.feedbackChip}" data-agent-feedback="too_far" data-feedback-plan="${index}">太远了</button>
+          <button class="${TW.feedbackChip}" data-agent-feedback="too_noisy" data-feedback-plan="${index}">太嘈杂</button>
+          <button class="${TW.feedbackChip}" data-agent-feedback="too_expensive" data-feedback-plan="${index}">预算太高</button>
+          <button class="${TW.feedbackChip}" data-agent-feedback="less_like_this" data-feedback-plan="${index}">少推这类</button>
+        </div>
+      </details>` : ""}
       ${renderDevReasoning(match, index)}
-      <button class="${TW.primaryButton} ${TW.wide}" data-invite-match="${index}" data-select-match="${index}" style="margin-top:4px;">发出邀约</button>
     </article>
   `;
 }
@@ -1713,7 +1721,8 @@ function showGroupInviteModal(match) {
     document.body.appendChild(overlay);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
     document.getElementById("closeInviteModal").addEventListener("click", () => overlay.remove());
-    document.getElementById("inviteSend").addEventListener("click", () => {
+    document.getElementById("inviteSend").addEventListener("click", (e) => {
+      e.currentTarget.disabled = true; // prevent double-submit
       overlay.remove();
       const matchWithTime = { ...match, suggested_time: currentTime };
       selectMatch(matchWithTime);
@@ -1829,10 +1838,10 @@ function showMatchSuccessAnimation(match, options = {}) {
   }
 
   document.getElementById("matchSuccessCTA").addEventListener("click", goNext);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) goNext(); });
-
+  // Tapping the dark background area only pauses the auto-timer, does NOT jump
   const AUTO_MS = 3600;
-  const timer = setTimeout(goNext, AUTO_MS);
-  // Cancel auto-advance if user taps CTA first
-  overlay.addEventListener("click", () => clearTimeout(timer), { once: true });
+  let timer = setTimeout(goNext, AUTO_MS);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) clearTimeout(timer); // pause only, don't navigate
+  });
 }

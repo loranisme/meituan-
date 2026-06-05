@@ -230,15 +230,16 @@
 
 /* ── Agent 重规划区域（成局页底部）── */
 .success-agent-actions {
-  margin-top: 20px;
-  border-top: 1px solid #f0f0f0;
-  padding-top: 16px;
+  margin-top: 16px;
+  background: #f9f9f9;
+  border-radius: 16px;
+  padding: 14px 16px;
 }
 .success-agent-label {
-  font-size: 12px;
-  color: #9ca3af;
-  font-weight: 600;
-  margin: 0 0 10px;
+  font-size: 13px;
+  color: #6b7280;
+  font-weight: 700;
+  margin: 0 0 12px;
   text-align: center;
 }
 .success-agent-btns {
@@ -956,6 +957,19 @@
   box-shadow: 0 2px 0 #E6B000;
 }
 .create-submit-btn:active { transform: translateY(1px); box-shadow: none; }
+.match-invite-btn { margin-top: 12px; }
+.match-card-secondary-details summary::-webkit-details-marker { display: none; }
+.create-cancel-btn {
+  min-height: 46px;
+  border-radius: 12px;
+  background: #f5f5f5;
+  border: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #9ca3af;
+  cursor: pointer;
+  font: inherit;
+}
 
 /* ---------- 商家信息 tab ---------- */
 .merchant-info-body {
@@ -2045,11 +2059,13 @@
   box-shadow: 0 0 0 3px rgba(255, 224, 51, 0.38), 0 1px 5px rgba(15, 23, 42, 0.18);
 }
 @media (prefers-reduced-motion: reduce) {
-  .map-pin,
-  .map-pin.pin-enter,
-  .map-pin.is-selected,
-  .mini-merchant-pin {
-    animation: none;
+  .map-pin, .map-pin.pin-enter, .map-pin.is-selected, .mini-merchant-pin,
+  .mso-particle, .mso-spark, .mso-spark-glow, .mso-avatar-left, .mso-avatar-right,
+  .mso-text-block, .mso-poi-card, .mso-cta, .mso-overlay, .mso-progress,
+  .agent-replan-spinner, .chat-peer-dot, .djl-row, .match-inspire-tile,
+  .map-skeleton-pulse, .footerDotPulse, .msoCtaPulse {
+    animation: none !important;
+    transition: none !important;
   }
 }
 

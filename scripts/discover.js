@@ -2283,7 +2283,7 @@ function updatePOISheet() {
           </div>
         </div>
       </div>
-      <div class="dv2-poi-opp-badge"><b>${opportunityScore}</b><small>机会分</small></div>
+      <div class="dv2-poi-opp-badge"><b>${opportunityScore}</b><small>今日热度</small></div>
     </div>
 
     <!-- Tab 导航 -->
@@ -2392,7 +2392,10 @@ function renderCreateSessionTab(poi) {
           ${["轻松聊天", "低压力 1v1", "小组热闹", "安静陪伴"].map((s) => `<button type="button" class="create-style-opt" data-style="${s}">${s}</button>`).join("")}
         </div>
       </div>
-      <button type="button" class="create-submit-btn" id="createSessionSubmit">发起这个局 →</button>
+      <div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;">
+        <button type="button" class="create-cancel-btn" id="createSessionCancel">取消</button>
+        <button type="button" class="create-submit-btn" id="createSessionSubmit">发起这个局 →</button>
+      </div>
     </div>
   `;
 }
@@ -2490,6 +2493,10 @@ function bindCreateTabListeners(poi) {
   });
 
   // Submit
+  document.getElementById("createSessionCancel")?.addEventListener("click", () => {
+    appState.poiSheetTab = "demands";
+    updatePOISheet();
+  });
   document.getElementById("createSessionSubmit")?.addEventListener("click", () => {
     const time = document.getElementById("createTimeCustom")?.value || "今晚 19:30";
     const size = Number(document.getElementById("createGroupInput")?.value || 2);
@@ -2514,7 +2521,7 @@ function bindCreateTabListeners(poi) {
     appState.poiSheetTab = "demands";
     updatePOISheet();
     updateDiscoverRecommend();
-    showToast(`已在 ${poi.name} 发起局，快来找搭子吧 🎉`);
+    showToast(`已发起！等人来加入这局 🎉`);
   });
 }
 
