@@ -267,6 +267,31 @@ function pinSummaryHTML(poi, matchScore) {
   return `${hotDot}${aiBadge}<span class="pin-emoji">${emoji}</span><span class="pin-label">${name}</span>`;
 }
 
+// 头像哈希颜色 — 与 match 页用户头像风格一致
+const AVATAR_PALETTE = [
+  { bg: "#FFF4ED", color: "#C2410C" }, // orange
+  { bg: "#EFF5FF", color: "#1D4ED8" }, // blue
+  { bg: "#ECFDF5", color: "#065F46" }, // green
+  { bg: "#F5F0FF", color: "#6D28D9" }, // purple
+  { bg: "#FFF8E1", color: "#92400E" }, // amber
+  { bg: "#FFF0F0", color: "#BE123C" }, // rose
+  { bg: "#F0FDFA", color: "#0F766E" }, // teal
+  { bg: "#FDF4FF", color: "#86198F" }, // fuchsia
+];
+function avatarHashColor(seed) {
+  let hash = 0;
+  const s = String(seed || "?");
+  for (let i = 0; i < s.length; i++) {
+    hash = ((hash << 5) - hash) + s.charCodeAt(i);
+    hash |= 0;
+  }
+  return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
+}
+function avatarHTML(seed, initial, size = 38) {
+  const { bg, color } = avatarHashColor(seed);
+  return `<span class="dv2-avatar" style="width:${size}px;height:${size}px;background:${bg};color:${color};font-size:${Math.round(size * 0.42)}px;">${escapeHTML(String(initial || "?")[0])}</span>`;
+}
+
 const MAP_CLUSTER_DEFS = [
   { id: "food", label: "吃喝", categories: ["餐厅", "咖啡"], x: 35, y: 46, accent: "#FF6B35", tint: "#FFF4ED" },
   { id: "night", label: "夜间", categories: ["夜宵", "酒吧"], x: 31, y: 70, accent: "#FF2442", tint: "#FFF0F3" },
@@ -1122,7 +1147,7 @@ function updateRefMapHeading() {
   if (!el) return;
   const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
   const total = list.reduce((sum, poi) => sum + Number(poi.buddy_demand_count || 0), 0);
-  const forming = list.reduce((sum, poi) => sum + Math.max(0, Math.round((poi.buddy_demand_count || 0) / 4)), 0);
+  const forming = list.filter((p) => Number(p.buddy_demand_count || 0) >= 2).length;
   const hotCount = list.filter(isHotPoi).length;
   el.innerHTML = `
     <div class="dv2-stats-row-inner">
@@ -1419,6 +1444,10 @@ function initLeafletMap() {
   container.className = "dv2-map-canvas leaflet-map-host is-discover-view";
   container.innerHTML = `
     <div id="leafletTileLayer" style="position:absolute;inset:0;z-index:0;"></div>
+    <div class="map-skeleton-loader" id="mapSkeletonLoader" aria-hidden="true">
+      <div class="map-skeleton-pulse"></div>
+      <span>地图加载中…</span>
+    </div>
     <canvas id="heatCanvas" class="discover-heat-canvas leaflet-heat-overlay" aria-hidden="true"></canvas>
     <div id="mockMapPins" class="map-pins-layer leaflet-pin-layer"></div>
   `;
@@ -1439,10 +1468,14 @@ function initLeafletMap() {
     keyboard: false
   });
 
-  window.L.tileLayer(
+  const tileLayer = window.L.tileLayer(
     "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
     { subdomains: "abcd", maxZoom: 19 }
   ).addTo(leafletMap);
+  tileLayer.on("load", () => {
+    const skeleton = document.getElementById("mapSkeletonLoader");
+    if (skeleton) { skeleton.style.opacity = "0"; setTimeout(() => skeleton?.remove(), 300); }
+  });
 
   // User location dot
   const userPin = currentCityUserPin();
@@ -2133,6 +2166,7 @@ function updateSceneNavigator() {
       else renderMockMapPins();
       updatePOISheet();
       updateRefMapHeading();
+      updateDiscoverRecommend();
     });
   });
 }
@@ -2140,73 +2174,64 @@ function updateSceneNavigator() {
 function updateDiscoverRecommend() {
   const el = document.getElementById("discoverRecommend");
   if (!el) return;
-  const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
-  if (!list.length) {
-    el.innerHTML = "";
-    el.hidden = true;
-    return;
-  }
-  const displayPoiIds = new Set(list.map((p) => p.poi_id));
-  const allUsers = [...users, ...backgroundUsers];
-  const liveDemands = buddyDemands
-    .filter((d) => d.status === "waiting" && displayPoiIds.has(d.poi_id))
-    .slice(0, 3)
-    .map((d) => {
-      const poi = pois.find((p) => p.poi_id === d.poi_id);
-      const user = allUsers.find((u) => u.user_id === d.user_id);
-      return { ...d, poi, user, distance_km: user?.distance_km ?? poi?.distance_km ?? 1.2 };
-    });
-  const moments = circleMoments(getCurrentCircle()).slice(0, 3);
   el.hidden = false;
+
+  const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
+
+  // Unified data source: use getFakeDemands (same as POI sheet) per ranked POI
+  const allDemands = [];
+  for (const poi of list.slice(0, 12)) {
+    const demands = getFakeDemands(poi);
+    for (const d of demands.slice(0, 2)) {
+      allDemands.push({ ...d, poi });
+      if (allDemands.length >= 5) break;
+    }
+    if (allDemands.length >= 5) break;
+  }
+
+  const joinCount = allDemands.length;
+
   el.innerHTML = `
-    <div class="discover-live-section">
-      <div class="${TW.discoverRecHead}">
-        <h3 class="text-[17px] font-bold text-ink">可加入的局</h3>
-        <span class="discover-section-count">${liveDemands.length} 个可加入</span>
+    <div class="djl-root">
+      <div class="djl-head">
+        <span class="djl-head-title">可加入的局</span>
+        ${joinCount ? `<span class="djl-head-count">${joinCount} 个</span>` : ""}
       </div>
-      <div class="discover-join-list">
-        ${liveDemands.map((d) => {
-          const poi = d.poi || pois.find((p) => p.poi_id === d.poi_id);
-          const avatar = (d.user?.nickname || d.activity_type || "搭")[0];
-          return `
-            <div class="discover-join-row">
-              <span class="discover-feed-avatar">${escapeHTML(avatar)}</span>
-              <span class="discover-feed-body">
-                <b>${escapeHTML(poi?.name || "附近地点")} <small>${escapeHTML(d.target_time || "今晚")}</small></b>
-                <em>${escapeHTML(d.activity_type || "搭子")} · ¥${d.budget_min}–${d.budget_max} · ${d.distance_km}km</em>
-              </span>
-              <button type="button" data-join-demand="${escapeHTML(d.demand_id)}">加入</button>
-            </div>`;
-        }).join("") || `<p class="${TW.muted}" style="font-size:12px;">当前筛选下暂无可加入的局，点地图商家可以快速匹配。</p>`}
-      </div>
+      ${joinCount ? `
+        <div class="djl-list">
+          ${allDemands.map((d) => {
+            const poi = d.poi || pois.find((p) => p.poi_id === d.poi_id);
+            const nickname = d.nickname || d.demandUser?.nickname || "搭子";
+            const seed = d.demand_id || nickname;
+            const { bg, color } = avatarHashColor(seed);
+            const walkMin = poi ? Math.max(2, Math.round((poi.distance_km || 1) * 12)) : "?";
+            const dealText = poi ? merchantDealShort(poi) : "";
+            return `
+              <button type="button" class="djl-row" data-join-demand="${escapeHTML(d.demand_id)}">
+                <span class="djl-avatar" style="background:${bg};color:${color};">${escapeHTML(nickname[0])}</span>
+                <span class="djl-body">
+                  <span class="djl-row-top">
+                    <b>${escapeHTML(poi?.name || "附近地点")}</b>
+                    <em>${escapeHTML(d.target_time || "今晚")}</em>
+                  </span>
+                  <span class="djl-row-sub">${escapeHTML(d.activity_type || "搭子")} · ¥${d.budget_min}–${d.budget_max} · 步行 ${walkMin} 分钟</span>
+                  ${dealText ? `<span class="djl-deal-tag">${escapeHTML(dealText)}</span>` : ""}
+                </span>
+                <span class="djl-join-btn">加入</span>
+              </button>`;
+          }).join("")}
+        </div>
+      ` : `
+        <div class="djl-empty">
+          <span class="djl-empty-icon">🔍</span>
+          <b>当前筛选下暂无可加入的局</b>
+          <p>切换上方品类，或点地图商家用 AI 快速匹配</p>
+        </div>
+      `}
     </div>`;
-  el.querySelectorAll("[data-feed-poi]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poi = list.find((p) => p.poi_id === btn.dataset.feedPoi) || getMockPoisWithCoords().find((p) => p.poi_id === btn.dataset.feedPoi);
-      if (!poi) return;
-      appState.selectedPOI = poi;
-      appState.mapManualPOI = true;
-      renderMockMapPins();
-      updatePOISheet();
-      updateRefMapVisual();
-      updateDiscoverRecommend();
-    });
-  });
+
   el.querySelectorAll("[data-join-demand]").forEach((btn) => {
     btn.addEventListener("click", () => joinDemand(btn.dataset.joinDemand));
-  });
-  el.querySelectorAll("[data-rec-poi]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const poi = (gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory)).find((p) => p.poi_id === btn.dataset.recPoi) || getMockPoisWithCoords().find((p) => p.poi_id === btn.dataset.recPoi);
-      if (!poi) return;
-      appState.selectedPOI = poi;
-      appState.mapManualPOI = true;
-      renderMockMapPins();
-      updatePOISheet();
-      updateRefMapVisual();
-      updateDiscoverRecommend();
-      updateRefMapHeading();
-    });
   });
 }
 
