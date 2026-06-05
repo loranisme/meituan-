@@ -2124,7 +2124,10 @@ function updateSceneNavigator() {
     btn.addEventListener("click", () => {
       const cat = btn.dataset.catFilter;
       appState.selectedCategory = cat;
-      gaodePOIs = filteredMockPois(cat === "全部" ? null : cat);
+      // filteredMockPois 按 categoryToActivity 字符串或 "全部" 过滤，
+      // 对原始 category 名（餐厅/咖啡/KTV…）直接按 poi.category 过滤
+      const base = filteredMockPois("全部");
+      gaodePOIs = cat === "全部" ? base : base.filter((p) => p.category === cat);
       updateSceneNavigator();
       if (leafletMap) renderLeafletPins();
       else renderMockMapPins();
