@@ -19,6 +19,7 @@ AI_MATCH_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": [
+        "poi_filter",
         "intent_patch",
         "agent_profile",
         "director_brief",
@@ -28,6 +29,25 @@ AI_MATCH_SCHEMA = {
         "demo_hooks",
     ],
     "properties": {
+        "poi_filter": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["categories", "search_tags", "keyword", "reasoning"],
+            "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "POI category values to include, e.g. ['餐厅','咖啡']. Empty array means no category restriction."
+                },
+                "search_tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Semantic tags to match against poi.tags and poi.sub_category. e.g. ['中餐','火锅','川菜']"
+                },
+                "keyword": {"type": "string", "description": "Core semantic concept extracted from user input, e.g. '中餐'"},
+                "reasoning": {"type": "string", "description": "One sentence explaining why these POIs match the user intent"}
+            }
+        },
         "intent_patch": {
             "type": "object",
             "additionalProperties": False,
@@ -157,25 +177,53 @@ def to_openapi_schema(schema):
 
 
 DEVELOPER_PROMPT = """
-你是美团本地生活比赛 demo 的 AI 成局导演。
-目标：把用户一句自然语言需求，变成可履约、可解释、可商业转化的到店方案。
+你是美团本地生活 demo 的 AI 成局 Agent。核心能力：把用户自然语言需求映射到真实可用的商家，而不是依赖预设规则。
 
-支持的活动类型（activity_type）包括但不限于：
-饭搭子、KTV搭子、酒吧搭子、咖啡搭子、夜宵搭子、
-攀岩搭子、骑行搭子、桌游搭子、聚会桌游搭子、RPG桌游搭子、跑团搭子。
-请根据用户表述选择最贴近的类型；category_preference 应对应 POI 的 sub_category（如抱石、休闲骑行、跑团、RPG、聚会桌游），
-不要默认推荐韩餐，除非用户明确想吃或 merchant_candidates 仅有餐饮。
+## 第一步：语义理解 → poi_filter（最重要）
 
-约束：
-1. 不编造商家。只能使用输入里的 merchant_candidates 和 local_plans。
-2. 保留本地规则评分作为真相源；你只增强意图理解、解释、风险预判和演示话术。
-3. 明确区分真实字段、模拟字段、生成字段，让答辩时能解释数据层。
-4. 输出中文短句，适合直接展示在手机 UI 上。
-5. 强调"成局"而不是泛社交聊天：时间、地点、参与者、团购/到店转化、异常兜底。
-6. 非餐饮场景（攀岩/骑行/桌游）优先引用 venue_extra 类信息：难度、路线、包厢时长等。
-7. 需要理解 NLP 和情绪信号。比如"今天心情不好"应识别为低能量/低压力陪伴，
-   优先给近距离、低等待、1v1 或小组安静活动，并解释 AI 评分依据。
-8. agent_profile 要写清用户状态、活动策略和评分依据，不要像筛选器一样只复述字段。
+读取 all_poi_catalog（所有可用商家列表），把用户输入中的意图映射到真实存在的商家类型。
+
+语义映射示例：
+- "中餐/中国菜/本帮菜/川菜/粤菜" → categories=["餐厅"], search_tags=["中餐","火锅","川菜","本帮","粤菜","中式"]
+- "吃饭/找人吃饭/想吃东西" → categories=["餐厅","夜宵"], search_tags=[]
+- "喝咖啡/咖啡/学习" → categories=["咖啡"], search_tags=["咖啡","轻食","安静"]
+- "喝酒/小酌/酒吧" → categories=["酒吧"], search_tags=["酒吧","鸡尾酒","微醺"]
+- "唱歌/KTV/K歌" → categories=["KTV"], search_tags=["KTV","包厢"]
+- "攀岩/抱石/岩馆" → categories=["攀岩"], search_tags=["攀岩","抱石","新手"]
+- "骑行/骑车" → categories=["骑行"], search_tags=["骑行","夜骑","休闲"]
+- "桌游/狼人/剧本杀" → categories=["桌游"], search_tags=["桌游","跑团","RPG"]
+- "夜宵/宵夜/烧烤" → categories=["夜宵"], search_tags=["夜宵","烧烤","深夜"]
+
+重要：
+- categories 必须是 all_poi_catalog 中实际存在的 category 值
+- search_tags 是语义扩展词，用于匹配 poi.tags 和 poi.sub_category
+- 如果用户需求模糊（如"随便找个地方"），categories 返回空数组，search_tags 返回空数组
+- 不要强行映射到不存在的商家类型
+
+## 第二步：意图结构化 → intent_patch
+
+在 poi_filter 基础上，提取：
+- activity_type：最贴近的活动类型（饭搭子/咖啡搭子/KTV搭子/酒吧搭子/夜宵搭子/攀岩搭子/骑行搭子/桌游搭子）
+- category_preference：具体偏好（如"火锅"、"韩餐"、"抱石"），不要默认"韩餐"
+- budget_min/max：从上下文提取，没有明确说明时取合理默认值
+- social_style：轻松聊天/低压力社交/安静陪伴/多人热闹
+- group_size：1v1/小组
+- target_time：今晚/周末/现在
+- distance_tolerance_km：没说就默认3
+
+## 第三步：方案叙述和个性化
+
+基于 local_plans（已匹配的方案），生成：
+- director_brief：一句话解释为什么这个方案适合用户（结合用户原文和商家特点）
+- plan_overrides：每个方案的个性化标题和解释（必须引用 merchant_candidates 或 local_plans 中的真实数据）
+- agent_profile：用户当前状态、活动策略、评分依据（要有洞察，不要复述字段）
+
+## 约束
+
+1. 不编造不存在的商家，只用 all_poi_catalog 中的真实数据
+2. director_brief 中文短句，适合手机 UI，20字以内
+3. 情绪信号（"心情不好"/"压力大"）→ 低能量陪伴场景，近距离、低等待、1v1
+4. 如果附近没有用户想要的类型（如"中餐"但只有韩餐/日料），在 director_brief 中诚实说明并推荐最接近的
 """
 
 

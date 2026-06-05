@@ -174,6 +174,8 @@ async function runAI() {
   appState.aiMoodProfile = null;
   appState.aiAgentError = "";
   appState.aiRuleFallback = false;
+  appState.aiFilteredByGemini = false;
+  appState.aiFilterReason = "";
   render();
   try {
     appState.aiMoodProfile = analyzeMoodNLP(appState.userInput);
@@ -265,13 +267,30 @@ function buildRuleOnlyDirectorFallback() {
 }
 
 function buildAIDirectorPayload(availablePOIs) {
+  // Full POI catalog so Gemini can understand what actually exists nearby
+  const allPOIs = (gaodePOIs.length ? gaodePOIs : pois).slice(0, 60);
+  const poiCatalog = allPOIs.map((poi) => ({
+    poi_id: poi.poi_id,
+    name: poi.name,
+    category: poi.category,
+    sub_category: poi.sub_category,
+    tags: (poi.tags || []).slice(0, 6),
+    avg_price: poi.avg_price,
+    rating: poi.rating,
+    distance_km: poi.distance_km,
+    wait_time_min: poi.wait_time_min,
+    buddy_demand_count: poi.buddy_demand_count,
+    deal_text: poi.deal_text,
+    venue_extra: poi.venue_extra || null
+  }));
   return {
     area,
     user_input: appState.userInput,
     parsed_intent: appState.parsedIntent,
     mood_profile: appState.aiMoodProfile,
     sparse_mode: appState.sparseMode,
-    merchant_candidates: availablePOIs.slice(0, 12).map((poi) => ({
+    all_poi_catalog: poiCatalog,
+    merchant_candidates: availablePOIs.slice(0, 8).map((poi) => ({
       poi_id: poi.poi_id,
       name: poi.name,
       category: poi.category,
@@ -374,9 +393,43 @@ async function enrichWithAIDirector(availablePOIs, options = {}) {
     const director = await requestAIDirector(payload);
     appState.aiDirector = director;
     appState.aiProvider = director.provider || appState.aiProvider || "";
+
     if (director.agent_profile) {
       appState.aiMoodProfile = { ...(appState.aiMoodProfile || {}), ...director.agent_profile };
     }
+
+    // ── Core NLP→POI filter: Gemini tells us which POIs actually match ──
+    if (director.poi_filter && !options.skipPoiFilter) {
+      const { categories = [], search_tags = [] } = director.poi_filter;
+      if (categories.length || search_tags.length) {
+        const allPool = gaodePOIs.length ? gaodePOIs : filteredMockPois("全部");
+        const tagsLower = search_tags.map((t) => String(t).toLowerCase());
+        const filtered = allPool.filter((poi) => {
+          const catMatch = !categories.length || categories.includes(poi.category);
+          if (!catMatch) return false;
+          if (!tagsLower.length) return true;
+          // Match against sub_category and tags
+          const poiText = [poi.sub_category, ...(poi.tags || [])].map((s) => String(s).toLowerCase());
+          return tagsLower.some((tag) => poiText.some((t) => t.includes(tag) || tag.includes(t)));
+        });
+        // Only update gaodePOIs if we got reasonable results (≥ 1); else keep original pool
+        if (filtered.length >= 1) {
+          gaodePOIs = filtered;
+          appState.aiFilteredByGemini = true;
+          appState.aiFilterReason = director.poi_filter.reasoning || "";
+        } else {
+          // Relax to category-only match
+          const catOnly = allPool.filter((poi) => !categories.length || categories.includes(poi.category));
+          if (catOnly.length >= 1) {
+            gaodePOIs = catOnly;
+            appState.aiFilteredByGemini = true;
+            appState.aiFilterReason = `附近没有完全匹配"${director.poi_filter.keyword}"的商家，已展示最相近的类型`;
+          }
+          // else: keep original pool, let rule layer handle it
+        }
+      }
+    }
+
     if (director.intent_patch && !options.skipIntentPatch) {
       appState.parsedIntent = {
         ...appState.parsedIntent,
@@ -384,8 +437,11 @@ async function enrichWithAIDirector(availablePOIs, options = {}) {
         parse_layer: "agent_enriched",
         parse_confidence: director.intent_patch.confidence ?? appState.parsedIntent.parse_confidence
       };
-      rerunMatching();
     }
+
+    // Re-run matching with the (possibly filtered) POI pool + patched intent
+    if (!options.skipIntentPatch) rerunMatching();
+
     applyDirectorPlanOverrides(director);
     return director;
   } catch (error) {
@@ -1284,6 +1340,7 @@ function renderIntentCard() {
           ${hardConditions.length ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">硬条件</span><span>${hardConditions.map(escapeHTML).join("、")}</span></div>` : ""}
           ${softPrefs.length ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">软偏好</span><span>${softPrefs.map(escapeHTML).join("、")}</span></div>` : ""}
           <div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">系统判断</span><span>${escapeHTML(agentJudgment)}</span></div>
+          ${appState.aiFilteredByGemini ? `<div class="${TW.intentRow}"><span class="${TW.intentRowLabel}">商家过滤</span><span style="color:#15803d;">${escapeHTML(appState.aiFilterReason || "已按语义重新筛选商家")}</span></div>` : ""}
         </div>
         <p style="margin-top:8px;font-size:12px;color:${confidenceLow ? "#b45309" : "#15803d"};">
           ${confidenceLow ? "还需要一点澄清" : "理解完成"}

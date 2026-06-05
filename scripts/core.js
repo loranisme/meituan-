@@ -103,6 +103,8 @@ const appState = {
   lastRematchNote: "",
   aiProvider: "",
   aiRuleFallback: false,
+  aiFilteredByGemini: false,
+  aiFilterReason: "",
   chatReplyLoading: false,
   lastRejectRematch: null,
   selectedCircleId: lifeCircles[0]?.id || "near",
