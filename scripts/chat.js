@@ -205,12 +205,14 @@ function renderChatPage() {
           <span class="${appState.currentUserConfirmed ? "ok" : ""}">我 ${appState.currentUserConfirmed ? "已确认" : "待确认"}</span>
           <span class="${appState.matchedUserConfirmed ? "ok" : ""}">对方 ${appState.matchedUserConfirmed ? "已确认" : "待确认"}</span>
         </div>
-        ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? `<p class="chat-plan-footnote">等待对方确认中，确认后会生成成局卡片。</p>` : ""}
+        ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? `
+          <div class="chat-peer-confirming">
+            <span class="chat-peer-dot"></span>
+            <span>对方确认中…</span>
+          </div>` : ""}
         <div class="${TW.actionGrid}">
           ${appState.planStatus === PLAN_STATUS.LOCKED_WAITING_PEER ? `
-            <button class="${TW.secondaryButton} ${TW.wide}" disabled>等待对方确认</button>
             ${showDevControls && appState.developerMode ? `
-              <button class="${TW.secondaryButton}" id="simPeerConfirm">模拟对方确认</button>
               <button class="${TW.secondaryButton}" id="simPeerReject">模拟对方拒绝</button>
               <button class="${TW.secondaryButton}" id="simTimeout">模拟等待超时</button>
             ` : ""}
@@ -640,23 +642,20 @@ function confirmMatch() {
   appState.chatThread.current_user_confirmed = true;
   appState.chatThread.messages.push({ sender: "user_current", text: "我确认这个方案，等你的回复～", timestamp: nowTime() });
   render();
+  // 对方默认同意，1.5s 后自动确认，触发 Match 动画
+  setTimeout(() => simulatePeerConfirm(), 1500);
 }
 
 function simulatePeerConfirm() {
   if (appState.planStatus !== PLAN_STATUS.LOCKED_WAITING_PEER) return;
   setPlanStatus(PLAN_STATUS.CONFIRMED);
   appState.matchedUserConfirmed = true;
-  appState.pendingSuccess = true;
   appState.chatThread.matched_user_confirmed = true;
   appState.chatThread.messages.push({ sender: "matched_user", text: "我也确认，待会见！", timestamp: nowTime() });
   const gc = buildGroupChat(appState.selectedMatch);
   appState.groupChats.push(gc);
-  render();
-  setTimeout(() => {
-    appState.pendingSuccess = false;
-    appState.currentPage = "success";
-    render();
-  }, 800);
+  // 双方都确认 → 触发 Match 成局动画，动画结束后跳成局详情页
+  showMatchSuccessAnimation(appState.selectedMatch, { destination: "success" });
 }
 
 function simulatePeerReject() {

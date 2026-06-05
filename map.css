@@ -228,6 +228,29 @@
   to   { width: 100%; }
 }
 
+/* 对方确认中 loading 指示 */
+.chat-peer-confirming {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #9ca3af;
+  font-weight: 600;
+  padding: 6px 0 2px;
+}
+.chat-peer-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #FFC400;
+  animation: peerDotPulse 1s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes peerDotPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+}
+
 /* ============================================================
    DISCOVER V2 — Figma 风格发现页
    ============================================================ */

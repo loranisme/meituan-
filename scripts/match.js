@@ -1704,20 +1704,25 @@ function showGroupInviteModal(match) {
   renderModal();
 }
 
-function showMatchSuccessAnimation(match) {
-  // Set up chat state before showing overlay (so chat is ready when user taps)
-  appState.selectedMatch = { ...match };
-  appState.depositSheetVisible = false;
-  appState.depositAgreementChecked = false;
-  appState.depositLocked = false;
-  appState.selectedDeal = null;
-  appState.fallbackSuggestion = "";
-  appState.debugMeta = match.concurrency || appState.debugMeta;
-  setPlanStatus(PLAN_STATUS.MATCHED);
-  appState.pendingSuccess = false;
-  appState.replanningNotice = "";
-  appState.chatThread = buildChatThread(appState.selectedMatch);
-  appState.viewingGroupChatId = "__active__";
+function showMatchSuccessAnimation(match, options = {}) {
+  const destination = options.destination || "chat";
+
+  if (destination === "chat") {
+    // Called from invite modal: need to set up chat state from scratch
+    appState.selectedMatch = { ...match };
+    appState.depositSheetVisible = false;
+    appState.depositAgreementChecked = false;
+    appState.depositLocked = false;
+    appState.selectedDeal = null;
+    appState.fallbackSuggestion = "";
+    appState.debugMeta = match.concurrency || appState.debugMeta;
+    setPlanStatus(PLAN_STATUS.MATCHED);
+    appState.pendingSuccess = false;
+    appState.replanningNotice = "";
+    appState.chatThread = buildChatThread(appState.selectedMatch);
+    appState.viewingGroupChatId = "__active__";
+  }
+  // destination === "success": state already set by confirmMatch/simulatePeerConfirm
 
   const me = window.mockData?.currentUser || {};
   const myInitial = (me.nickname || "我")[0];
@@ -1765,7 +1770,7 @@ function showMatchSuccessAnimation(match) {
 
       <div class="mso-text-block">
         <h1 class="mso-title">成局了！</h1>
-        <p class="mso-subtitle">${escapeHTML(match.user.nickname)} 接受了你的邀约</p>
+        <p class="mso-subtitle">${destination === "success" ? `双方已确认，约定成功！` : `${escapeHTML(match.user.nickname)} 接受了你的邀约`}</p>
       </div>
 
       <div class="mso-poi-card">
@@ -1776,28 +1781,34 @@ function showMatchSuccessAnimation(match) {
         </div>
       </div>
 
-      <button type="button" class="mso-cta" id="matchSuccessCTA">开始聊天 →</button>
+      <button type="button" class="mso-cta" id="matchSuccessCTA">${destination === "success" ? "查看成局详情 →" : "开始聊天 →"}</button>
       <div class="mso-progress" id="matchSuccessProgress"></div>
     </div>
   `;
   document.body.appendChild(overlay);
 
-  function goToChat() {
+  function goNext() {
     if (overlay._gone) return;
     overlay._gone = true;
     overlay.classList.add("mso-exit");
     setTimeout(() => {
       overlay.remove();
-      setPage("chat");
+      if (destination === "success") {
+        appState.pendingSuccess = false;
+        appState.currentPage = "success";
+        render();
+      } else {
+        setPage("chat");
+      }
       requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
     }, 380);
   }
 
-  document.getElementById("matchSuccessCTA").addEventListener("click", goToChat);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) goToChat(); });
+  document.getElementById("matchSuccessCTA").addEventListener("click", goNext);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) goNext(); });
 
   const AUTO_MS = 3600;
-  const timer = setTimeout(goToChat, AUTO_MS);
+  const timer = setTimeout(goNext, AUTO_MS);
   // Cancel auto-advance if user taps CTA first
   overlay.addEventListener("click", () => clearTimeout(timer), { once: true });
 }
