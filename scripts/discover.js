@@ -134,11 +134,9 @@ function updateAreaPill() {
   el.setAttribute("aria-label", canOpen ? "切换生活圈" : "当前小商圈");
   el.setAttribute("aria-disabled", canOpen ? "false" : "true");
   el.innerHTML = `
-    <span class="${TW.locPin}" aria-hidden="true" style="background:${circle.tint || "#F5F5F5"};border:1px solid ${circle.accent || "#EBEBEB"}">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="${circle.accent || "#757575"}"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
-    </span>
-    <span class="${TW.locCopy}"><b>${escapeHTML(areaLabel)}</b></span>
-    ${canOpen ? `<span class="${TW.locChev}" aria-hidden="true">›</span>` : ""}
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="${circle.accent || "#FF6B35"}" aria-hidden="true" style="flex-shrink:0"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+    <span style="font-size:13px;font-weight:700;color:#1a1a1a;">${escapeHTML(areaLabel)}</span>
+    ${canOpen ? `<span style="color:#9ca3af;font-size:11px;margin-left:1px;">›</span>` : ""}
   `;
   bindAreaPill();
 }
@@ -1032,34 +1030,42 @@ function defaultIntentTextForPoi(poi) {
 function renderMapPage() {
   if (!document.getElementById("refDiscoverRoot")) {
     $("#mapPage").innerHTML = `
-      <div class="${TW.refDiscover}" id="refDiscoverRoot">
-        <div class="${TW.discoverControls}">
-          <button type="button" class="${TW.locationPill}" id="areaLabel" aria-label="当前小商圈"></button>
-          <div id="discoverHeaderExtras" class="${TW.discoverHeaderExtras}">
-            <div id="refRadiusRow" class="${TW.refRadiusRow}"></div>
-          </div>
+      <div class="dv2-root" id="refDiscoverRoot">
+
+        <!-- ① 分类筛选栏（紧贴顶部，横向滚动） -->
+        <div class="dv2-cats-wrap">
+          <div class="dv2-cats" id="filterTabsRow"></div>
         </div>
-        <div class="${TW.refMapBlock}">
-          <div class="${TW.refMapHeading}" id="refMapHeading"></div>
-          <div id="filterTabsRow" class="${TW.refMapChips}"></div>
-          <div class="${TW.refMapCard}">
-            <div class="${TW.refMapVisual}" id="refMapVisual">
-              <div class="mapmaker-badge">小商圈地图</div>
-              <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map" : "fake-map is-discover-view"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
-                ${("AMap" in window) ? "" : `${flatMapDiscoverHTML()}
-                <div id="mockMapPins" class="map-pins-layer"></div>`}
-              </div>
-              <div class="${TW.refMapOverlay}">
-                <div id="refMapFooter" class="${TW.refMapFooter}"></div>
-                <button type="button" class="${TW.refMapLocate}" id="refMapLocate" aria-label="定位到我的位置" ${canShowDeveloperControls() ? "" : "hidden"}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="#2F7EF7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#2F7EF7" stroke-width="2" stroke-linecap="round"/></svg>
-                </button>
-              </div>
+
+        <!-- ② 地图区块（全宽，无卡片外框） -->
+        <div class="dv2-map-block">
+          <div class="dv2-map-canvas-wrap" id="refMapVisual">
+            <div id="mockMapCanvas" class="${("AMap" in window) ? "real-map dv2-map-canvas" : "fake-map is-discover-view dv2-map-canvas"}" role="img" aria-label="${escapeHTML(getCurrentCircle().name)}地图">
+              ${("AMap" in window) ? "" : `${flatMapDiscoverHTML()}<div id="mockMapPins" class="map-pins-layer"></div>`}
             </div>
+
+            <!-- 地图浮层：左上角位置 pill -->
+            <button type="button" class="dv2-map-area-pill" id="areaLabel" aria-label="切换生活圈"></button>
+
+            <!-- 地图浮层：底部数据条 -->
+            <div class="dv2-map-footer" id="refMapFooter"></div>
+
+            <!-- 地图浮层：右下角定位按钮 -->
+            <button type="button" class="dv2-map-locate" id="refMapLocate" aria-label="定位" ${canShowDeveloperControls() ? "" : "hidden"}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="#2F7EF7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#2F7EF7" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
           </div>
+
+          <!-- 地图下方：成局机会条 -->
+          <div class="dv2-stats-row" id="refMapHeading"></div>
         </div>
-        <section id="discoverRecommend" class="${TW.discoverRecommend}" hidden></section>
-        <section id="poiSheet" class="${TW.refPoiCard}"></section>
+
+        <!-- ③ 选中 POI 卡片 -->
+        <section id="poiSheet" class="dv2-poi-card"></section>
+
+        <!-- 隐藏区 -->
+        <section id="discoverRecommend" hidden></section>
+        <div id="discoverHeaderExtras" hidden><div id="refRadiusRow"></div></div>
       </div>
     `;
     document.getElementById("refMapLocate")?.addEventListener("click", locateCurrentCity);
@@ -1114,13 +1120,20 @@ function updateRefRadiusRow() {
 function updateRefMapHeading() {
   const el = document.getElementById("refMapHeading");
   if (!el) return;
-  const circle = getCurrentCircle();
-  const city = getCurrentCity();
   const list = rankedMapPois(gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory));
-  const buddies = list.reduce((sum, poi) => sum + Number(poi.buddy_demand_count || 0), 0);
+  const total = list.reduce((sum, poi) => sum + Number(poi.buddy_demand_count || 0), 0);
+  const forming = list.reduce((sum, poi) => sum + Math.max(0, Math.round((poi.buddy_demand_count || 0) / 4)), 0);
+  const hotCount = list.filter(isHotPoi).length;
   el.innerHTML = `
-    <h2 class="text-lg font-bold text-ink leading-snug">${escapeHTML(city.areaName || circle.shortName)}正在发生</h2>
-    <p class="text-[13px] text-muted mt-1.5 leading-snug">一个小商圈 · ${list.length} 家店 · ${buddies} 人想约 · 点 pin 看局</p>
+    <div class="dv2-stats-row-inner">
+      <div class="dv2-stat"><b>${list.length}</b><span>家地点</span></div>
+      <div class="dv2-stat-div"></div>
+      <div class="dv2-stat"><b>${total}</b><span>人想出门</span></div>
+      <div class="dv2-stat-div"></div>
+      <div class="dv2-stat dv2-stat-hot"><b>${forming}</b><span>个成局中</span></div>
+      <div class="dv2-stat-div"></div>
+      <div class="dv2-stat"><b>${hotCount}</b><span>热门地点</span></div>
+    </div>
   `;
 }
 
@@ -1136,13 +1149,24 @@ function updateRefBubbles() {
 function updateRefMapFooter() {
   const el = document.getElementById("refMapFooter");
   if (!el) return;
-  const list = gaodePOIs.length ? gaodePOIs : filteredMockPois(appState.selectedCategory);
-  const ranked = rankedMapPois(list);
-  const best = appState.selectedPOI || ranked[0];
   const city = getCurrentCity();
-  el.innerHTML = best
-    ? `<span>${escapeHTML(city.areaName || city.shortName || city.name)} · ${escapeHTML(best.name)}</span><span class="text-muted">· ${best.buddy_demand_count >= 5 ? "很多人在去" : "今晚推荐"}</span>`
-    : `<span class="text-muted">${escapeHTML(city.areaName || city.shortName || city.name)} · 点地图 pin 看附近组局</span>`;
+  const best = appState.selectedPOI;
+  const radiusKm = currentBrowseRadiusKm();
+  const areaName = city.areaName || city.shortName || city.name;
+  if (best) {
+    const walkMin = Math.max(2, Math.round((best.distance_km || 0.8) * 12));
+    el.innerHTML = `
+      <span class="dv2-footer-dot ${isHotPoi(best) ? "is-hot" : ""}"></span>
+      <span class="dv2-footer-name">${escapeHTML(best.name)}</span>
+      <span class="dv2-footer-meta">${walkMin} 分钟 · ¥${best.avg_price}</span>
+    `;
+  } else {
+    el.innerHTML = `
+      <span class="dv2-footer-dot"></span>
+      <span class="dv2-footer-name">${escapeHTML(areaName)}</span>
+      <span class="dv2-footer-meta">${radiusKm}km 范围 · 点 pin 看局</span>
+    `;
+  }
 }
 
 function updateRefStickyBar(poi, demands) {
@@ -1392,7 +1416,7 @@ function initLeafletMap() {
     leafletMarkers = [];
   }
 
-  container.className = "leaflet-map-host is-discover-view";
+  container.className = "dv2-map-canvas leaflet-map-host is-discover-view";
   container.innerHTML = `
     <div id="leafletTileLayer" style="position:absolute;inset:0;z-index:0;"></div>
     <canvas id="heatCanvas" class="discover-heat-canvas leaflet-heat-overlay" aria-hidden="true"></canvas>
@@ -2076,29 +2100,36 @@ function updateSceneNavigator() {
   const el = document.getElementById("filterTabsRow");
   if (!el) return;
   el.hidden = false;
-  const activeGroupId = activeSceneGroupId();
-  const chips = [
-    { id: "all", label: "全部", filter: "全部" },
-    { id: "eat", label: "吃喝", filter: "group:eat" },
-    { id: "sport", label: "动起来", filter: "group:sport" },
-    { id: "board", label: "桌游", filter: "group:board" }
+  // Direct category chips with emoji — filter by category name
+  const CAT_CHIPS = [
+    { label: "全部", emoji: "🗺", filter: "全部" },
+    { label: "餐厅", emoji: "🍜", filter: "餐厅" },
+    { label: "咖啡", emoji: "☕", filter: "咖啡" },
+    { label: "KTV", emoji: "🎤", filter: "KTV" },
+    { label: "酒吧", emoji: "🍸", filter: "酒吧" },
+    { label: "夜宵", emoji: "🌙", filter: "夜宵" },
+    { label: "攀岩", emoji: "🧗", filter: "攀岩" },
+    { label: "骑行", emoji: "🚴", filter: "骑行" },
+    { label: "桌游", emoji: "🎲", filter: "桌游" }
   ];
-  el.innerHTML = chips.map((chip) => {
-    const isActive = chip.id === "all"
-      ? appState.selectedCategory === "全部"
-      : activeGroupId === chip.id;
-    return `<button type="button" class="${TW.refMapChip} ${isActive ? "is-active" : ""}" data-discover-filter="${chip.filter}">${escapeHTML(chip.label)}</button>`;
+  const active = appState.selectedCategory || "全部";
+  el.innerHTML = CAT_CHIPS.map((chip) => {
+    const isActive = chip.filter === active || (chip.filter === "全部" && active === "全部");
+    return `<button type="button" class="dv2-cat-chip ${isActive ? "is-active" : ""}" data-cat-filter="${chip.filter}">
+      <span class="dv2-cat-emoji">${chip.emoji}</span>
+      <span>${escapeHTML(chip.label)}</span>
+    </button>`;
   }).join("");
-  el.querySelectorAll("[data-discover-filter]").forEach((btn) => {
+  el.querySelectorAll("[data-cat-filter]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      applySceneFilter(btn.dataset.discoverFilter, { expandNav: false });
+      const cat = btn.dataset.catFilter;
+      appState.selectedCategory = cat;
+      gaodePOIs = filteredMockPois(cat === "全部" ? null : cat);
       updateSceneNavigator();
-      updateDiscoverRecommend();
-      renderMockMapPins();
+      if (leafletMap) renderLeafletPins();
+      else renderMockMapPins();
       updatePOISheet();
-      updateRefMapVisual();
       updateRefMapHeading();
-      showToast(`已切换到${btn.textContent.trim()}`);
     });
   });
 }
@@ -2252,33 +2283,42 @@ function updatePOISheet() {
   const tab = appState.poiSheetTab || "demands";
 
   el.innerHTML = `
-    <div class="${TW.refPoiHero}" style="background-image:url('${poiCoverImage(poi)}')">
-      <div class="ref-poi-hero-badges">
-        <span>${escapeHTML(poi.open_status || "营业中")}</span>
-        <span>${walkMin} 分钟可达</span>
-        <span>${poi.rating} 分</span>
-      </div>
-    </div>
-    <div class="${TW.refPoiBody}">
-      <div class="${TW.refPoiTitleRow}">
-        <div>
-          <p class="ref-poi-kicker">${escapeHTML(categoryToActivity(poi))}</p>
-          <h2>${escapeHTML(poi.name)}</h2>
+    <!-- Hero -->
+    <div class="dv2-poi-hero" style="background-image:url('${poiCoverImage(poi)}')">
+      <div class="dv2-poi-hero-overlay">
+        <div class="dv2-poi-hero-badges">
+          <span class="dv2-badge-open">${escapeHTML(poi.open_status || "营业中")}</span>
+          ${isHotPoi(poi) ? `<span class="dv2-badge-hot">🔥 热门</span>` : ""}
         </div>
-        <span class="ref-poi-opportunity"><small>机会</small><b>${opportunityScore}</b></span>
+        <div class="dv2-poi-hero-info">
+          <p class="dv2-poi-kicker">${escapeHTML(poiEmoji(poi))} ${escapeHTML(categoryToActivity(poi))}</p>
+          <h2 class="dv2-poi-name">${escapeHTML(poi.name)}</h2>
+          <div class="dv2-poi-quick-meta">
+            <span>⭐ ${poi.rating}</span>
+            <span>·</span>
+            <span>${walkMin} 分钟可达</span>
+            <span>·</span>
+            <span>¥${poi.avg_price}/人</span>
+          </div>
+        </div>
       </div>
-      <div class="poi-sheet-tabs">
-        <button class="poi-tab ${tab === "demands" ? "is-active" : ""}" data-poi-tab="demands">可加入的局</button>
-        <button class="poi-tab ${tab === "create" ? "is-active" : ""}" data-poi-tab="create">创建新局</button>
-        <button class="poi-tab ${tab === "info" ? "is-active" : ""}" data-poi-tab="info">商家信息</button>
-      </div>
-      <div id="poiTabContent" class="poi-tab-content">
-        ${renderPoiTabContent(tab, poi, demands)}
-      </div>
+      <div class="dv2-poi-opp-badge"><b>${opportunityScore}</b><small>机会分</small></div>
+    </div>
+
+    <!-- Tab 导航 -->
+    <div class="dv2-poi-tabs">
+      <button class="dv2-poi-tab ${tab === "demands" ? "is-active" : ""}" data-poi-tab="demands">可加入的局</button>
+      <button class="dv2-poi-tab ${tab === "create" ? "is-active" : ""}" data-poi-tab="create">创建新局</button>
+      <button class="dv2-poi-tab ${tab === "info" ? "is-active" : ""}" data-poi-tab="info">商家信息</button>
+    </div>
+
+    <!-- Tab 内容 -->
+    <div id="poiTabContent" class="dv2-poi-tab-body">
+      ${renderPoiTabContent(tab, poi, demands)}
     </div>
   `;
 
-  el.querySelectorAll(".poi-tab[data-poi-tab]").forEach((btn) => {
+  el.querySelectorAll("[data-poi-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       appState.poiSheetTab = btn.dataset.poiTab;
       updatePOISheet();
@@ -2324,9 +2364,9 @@ function renderDemandsTab(poi, demands) {
         <p>可以让 AI 按预算、距离和聊天风格帮你发起匹配。</p>
       </div>
     `}
-    <div class="${TW.refPoiActions}">
-      <button type="button" class="${TW.refBtnPrimary}" id="poiJoinBtn">${primaryLabel}</button>
-      <button type="button" class="${TW.refBtnSecondary}" id="matchFromPoi">按这家店找搭子</button>
+    <div class="dv2-cta-row">
+      <button type="button" class="dv2-btn-primary" id="poiJoinBtn">${primaryLabel}</button>
+      <button type="button" class="dv2-btn-secondary" id="matchFromPoi">让 Agent 安排</button>
     </div>
   `;
 }
@@ -2416,9 +2456,9 @@ function renderMerchantInfoTab(poi) {
       ` : ""}
       ${tags.length ? `<div class="merchant-info-tags">${tags.map((t) => `<span>${escapeHTML(t)}</span>`).join("")}</div>` : ""}
       ${social.length ? `<div class="merchant-info-social"><span class="merchant-info-label">适合</span>${social.map((s) => `<span>${escapeHTML(s)}</span>`).join("")}</div>` : ""}
-      <div class="${TW.refPoiActions}" style="margin-top:12px;">
-        <button type="button" class="${TW.refBtnPrimary}" id="matchFromPoi">找搭子去这里</button>
-        <button type="button" class="${TW.refBtnSecondary}" id="poiNavBtn">导航出发</button>
+      <div class="dv2-cta-row" style="margin-top:12px;">
+        <button type="button" class="dv2-btn-primary" id="matchFromPoi">找搭子去这里</button>
+        <button type="button" class="dv2-btn-secondary" id="poiNavBtn">导航出发</button>
       </div>
     </div>
   `;
