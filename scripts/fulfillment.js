@@ -50,6 +50,19 @@ function renderSuccessPage() {
         <button class="${TW.secondaryButton}" id="viewRoute">导航出发</button>
         <button class="${TW.secondaryButton}" id="shareBuddy">分享</button>
       </div>
+      <div class="success-agent-actions">
+        <p class="success-agent-label">计划有变？让 Agent 重新安排</p>
+        <div class="success-agent-btns">
+          <button type="button" class="success-agent-btn" id="delayTimeBtn">
+            <span class="success-agent-icon">🕐</span>
+            <span>时间推迟</span>
+          </button>
+          <button type="button" class="success-agent-btn success-agent-btn-cancel" id="cancelMatchBtn">
+            <span class="success-agent-icon">✕</span>
+            <span>取消这一局</span>
+          </button>
+        </div>
+      </div>
     </section>
   `;
   const lastGC = appState.groupChats[appState.groupChats.length - 1];
@@ -72,6 +85,222 @@ function renderSuccessPage() {
     showPoiNavHint(appState.selectedMatch.poi);
   });
   $("#shareBuddy").addEventListener("click", () => showToast("已分享给搭子"));
+  $("#delayTimeBtn").addEventListener("click", showDelayTimePicker);
+  $("#cancelMatchBtn").addEventListener("click", showCancelMatchConfirm);
+}
+
+// ─── Agent 动态重规划：时间推迟 ───────────────────────────────
+function showDelayTimePicker() {
+  const match = appState.selectedMatch;
+  if (!match) return;
+  const TIME_OPTS = ["今晚 19:30", "今晚 20:00", "今晚 20:30", "今晚 21:00", "周末 15:00", "周末 18:00"];
+  let picked = match.suggested_time;
+
+  const overlay = document.createElement("div");
+  overlay.id = "delayTimeOverlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="${TW.modalSheet}" style="padding-bottom:32px;">
+      <div class="${TW.modalHeader}">
+        <div>
+          <p class="${TW.eyebrow}">计划有变</p>
+          <h2 style="font-size:17px;">选择新时间</h2>
+        </div>
+        <button class="${TW.modalClose}" id="closeDelayPicker">关闭</button>
+      </div>
+      <div style="padding:14px 18px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px;" id="delayTimeGrid">
+        ${TIME_OPTS.map((t) => `
+          <button type="button" class="delay-time-opt ${t === picked ? "is-active" : ""}" data-t="${t}"
+            style="min-height:44px;border-radius:12px;font-size:13px;font-weight:700;cursor:pointer;
+              border:1.5px solid ${t === picked ? "#FFC400" : "#ebebeb"};
+              background:${t === picked ? "#FFF8CC" : "#fff"};
+              color:${t === picked ? "#1a1a1a" : "#9ca3af"};">
+            ${t}
+          </button>`).join("")}
+      </div>
+      <div style="padding:14px 18px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <button type="button" class="${TW.secondaryButton}" id="cancelDelayPicker" style="min-height:46px;">取消</button>
+        <button type="button" class="${TW.primaryButton}" id="confirmDelayTime" style="min-height:46px;">Agent 重新安排</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll(".delay-time-opt").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      picked = btn.dataset.t;
+      overlay.querySelectorAll(".delay-time-opt").forEach((b) => {
+        const active = b.dataset.t === picked;
+        b.style.borderColor = active ? "#FFC400" : "#ebebeb";
+        b.style.background = active ? "#FFF8CC" : "#fff";
+        b.style.color = active ? "#1a1a1a" : "#9ca3af";
+      });
+    });
+  });
+
+  document.getElementById("closeDelayPicker").onclick =
+  document.getElementById("cancelDelayPicker").onclick = () => overlay.remove();
+
+  document.getElementById("confirmDelayTime").onclick = () => {
+    overlay.remove();
+    agentReplanWithNewTime(picked);
+  };
+}
+
+async function agentReplanWithNewTime(newTime) {
+  const match = appState.selectedMatch;
+  if (!match) return;
+  const oldTime = match.suggested_time;
+
+  // Show loading overlay
+  showAgentReplanOverlay("time_delay");
+
+  // Update time immediately
+  appState.selectedMatch = { ...match, suggested_time: newTime };
+
+  // Use replanMatch from MatchingUtils to find best alternative venue if needed
+  const allPOIs = gaodePOIs.length ? gaodePOIs : pois;
+  const replanned = window.MatchingUtils?.replanMatch
+    ? window.MatchingUtils.replanMatch(match, "waiting_time_change", allPOIs)
+    : match;
+
+  // Enrich with Gemini
+  try {
+    await directorChatIntervention(
+      "time_delay",
+      `原定时间 ${oldTime} 推迟到 ${newTime}，请确认地点是否仍然合适，或推荐等待更短的备选方案。`
+    );
+  } catch (_) {}
+
+  // Push message to group chat
+  if (appState.chatThread) {
+    appState.chatThread.messages.push({
+      sender: "ai",
+      text: `⏱ 时间已更新为 ${newTime}，地点仍是 ${appState.selectedMatch.poi.name}。Agent 已通知对方并确认等待情况。`,
+      timestamp: nowTime()
+    });
+  }
+
+  appState.replanningNotice = `Agent 已将时间从 ${oldTime} 调整为 ${newTime}，双方约定同步更新。`;
+  closeAgentReplanOverlay();
+  render();
+}
+
+// ─── Agent 动态重规划：取消该局 → 自动候补 ───────────────────
+function showCancelMatchConfirm() {
+  const match = appState.selectedMatch;
+  if (!match) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "cancelMatchOverlay";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="${TW.modalSheet}" style="padding-bottom:36px;">
+      <div class="${TW.modalHeader}">
+        <div>
+          <p class="${TW.eyebrow}">确认取消</p>
+          <h2 style="font-size:17px;">取消这一局？</h2>
+        </div>
+        <button class="${TW.modalClose}" id="closeCancelConfirm">关闭</button>
+      </div>
+      <div style="padding:14px 18px 0;">
+        <p style="font-size:14px;color:#4b5563;line-height:1.6;margin-bottom:16px;">
+          取消后诚意金将按规则处理。<br/>
+          Agent 会立即为你重新匹配新的搭子，通常 30 秒内完成。
+        </p>
+        <div class="cancel-consequence">
+          <div><span>📍</span><span>地点 ${match.poi.name} 保留备用</span></div>
+          <div><span>👤</span><span>排除 ${match.user.nickname}，重新搜索</span></div>
+          <div><span>🤖</span><span>Agent 自动推荐候补搭子</span></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px;">
+          <button type="button" class="${TW.secondaryButton}" id="keepMatch" style="min-height:46px;">再想想</button>
+          <button type="button" class="${TW.primaryButton}" id="confirmCancelMatch" style="min-height:46px;background:#1a1a1a;color:#fff;box-shadow:none;">确认取消，Agent 重配</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById("closeCancelConfirm").onclick =
+  document.getElementById("keepMatch").onclick = () => overlay.remove();
+
+  document.getElementById("confirmCancelMatch").onclick = () => {
+    overlay.remove();
+    agentCancelAndRematch();
+  };
+}
+
+async function agentCancelAndRematch() {
+  const match = appState.selectedMatch;
+  if (!match) return;
+
+  showAgentReplanOverlay("cancel_rematch");
+
+  // Exclude current user and re-run matching
+  const rejected = match.user.user_id;
+  if (!appState.excludedUserIds.includes(rejected)) appState.excludedUserIds.push(rejected);
+
+  // Reset state for re-matching
+  appState.selectedMatch = null;
+  appState.planStatus = PLAN_STATUS.IDLE;
+  appState.depositLocked = false;
+  appState.depositAgreementChecked = false;
+  appState.currentUserConfirmed = false;
+  appState.matchedUserConfirmed = false;
+
+  // Re-run matching with the same intent
+  rerunMatching({ excludeUserIds: [rejected] });
+  const next = appState.matchResults[0];
+
+  if (next) {
+    appState.pendingFallbackMatch = { ...next, intent: appState.parsedIntent };
+    // Enrich with Gemini
+    try {
+      const { availablePOIs } = getMatchSupply();
+      await enrichWithAIDirector(availablePOIs, { skipIntentPatch: true, skipPoiFilter: true });
+    } catch (_) {}
+  }
+
+  closeAgentReplanOverlay();
+
+  if (next) {
+    showToast(`Agent 已找到候补搭子：${next.user.nickname}`);
+    // Jump to AI page showing new results
+    setPage("ai");
+    render();
+    // Auto-show the new match
+    setTimeout(() => {
+      const el = document.querySelector("[data-invite-match='0']");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 400);
+  } else {
+    showToast("附近暂时没有合适的候补，稍后重试");
+    setPage("ai");
+    render();
+  }
+}
+
+// ─── 重规划 loading overlay ───────────────────────────────────
+function showAgentReplanOverlay(type) {
+  let overlay = document.getElementById("agentReplanOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "agentReplanOverlay";
+    document.body.appendChild(overlay);
+  }
+  const label = type === "time_delay" ? "Agent 正在重新确认时间和地点…" : "Agent 正在搜索候补搭子…";
+  overlay.className = "agent-replan-overlay";
+  overlay.innerHTML = `
+    <div class="agent-replan-content">
+      <div class="agent-replan-spinner"></div>
+      <p>${label}</p>
+    </div>
+  `;
+}
+
+function closeAgentReplanOverlay() {
+  document.getElementById("agentReplanOverlay")?.remove();
 }
 
 function renderProfilePage() {
