@@ -63,102 +63,29 @@ function rerunMatching(options = {}) {
   return results;
 }
 
-function analyzeMoodNLP(input) {
-  const text = String(input || "").trim();
-  const lower = text.toLowerCase();
-  const mood = {
-    mood_label: "需求明确",
-    user_state: "想把出门计划快速落地",
-    energy: "中",
+// 纯占位 intent：仅用于让打分引擎在「扫描候选」动画阶段有东西可算。
+// 它【不理解】用户输入的任何语义——真正的语言/情绪理解 100% 由 Gemini 完成
+// （见 enrichWithAIDirector）。Gemini 返回后会用其 intent_patch 覆盖这里的默认值。
+function neutralIntent() {
+  return {
+    activity_type: "饭搭子",
+    category_preference: "餐饮",
+    category_explicit: false,
+    budget_min: 5,
+    budget_max: 80,
     social_style: "轻松聊天",
-    activity_strategy: "优先选择近距离、低等待、预算明确的方案",
-    recommended_activity: "",
-    recommended_category: "",
-    confidence: 0.62,
-    score_basis: "预算、距离、时间、对方风格和商户等待综合评分"
+    group_size: "1v1",
+    target_time: "今晚",
+    distance_tolerance_km: 3,
+    interest_labels: [],
+    parse_confidence: 0.5,
+    parse_layer: "pending_ai"
   };
-
-  if (/心情不好|不开心|难过|emo|烦|低落|有点崩|郁闷|失落|不顺|压力大|累|焦虑|烦躁/.test(text)) {
-    mood.mood_label = /压力大|焦虑|烦躁|累/.test(text) ? "压力偏高" : "心情低落";
-    mood.user_state = "需要低压力陪伴，不适合强社交和长等待";
-    mood.energy = "低";
-    mood.social_style = /不想说话|安静/.test(text) ? "安静陪伴" : "低压力社交";
-    mood.activity_strategy = "安排近一点、能坐下、等待短的咖啡或轻食，先降低出门门槛";
-    mood.recommended_activity = "咖啡搭子";
-    mood.recommended_category = "咖啡";
-    mood.confidence = 0.88;
-    mood.score_basis = "情绪低落时降低社交强度，优先看距离、等待和对方是否愿意轻松陪伴";
-  }
-
-  if (/想发泄|释放|运动|出汗|憋|闷/.test(text)) {
-    mood.mood_label = "想释放压力";
-    mood.user_state = "需要有身体参与的活动，但节奏不能太硬";
-    mood.energy = "中高";
-    mood.social_style = "低压力社交";
-    mood.activity_strategy = "优先推荐攀岩或休闲骑行，匹配新手友好和装备可租的地点";
-    mood.recommended_activity = /骑/.test(text) ? "骑行搭子" : "攀岩搭子";
-    mood.recommended_category = /骑/.test(text) ? "休闲骑行" : "抱石";
-    mood.confidence = 0.84;
-    mood.score_basis = "把负面情绪转成可执行活动，兼顾安全、距离和新手友好";
-  }
-
-  if (/孤单|一个人|没人陪|想找人|想有人/.test(text) && !mood.recommended_activity) {
-    mood.mood_label = "想有人陪";
-    mood.user_state = "需要自然见面，不想进入尴尬聊天";
-    mood.social_style = "轻松聊天";
-    mood.activity_strategy = "优先安排 1v1 饭搭子或咖啡搭子，选择可快速到店的地点";
-    mood.recommended_activity = /吃|饭|饿/.test(text) ? "饭搭子" : "咖啡搭子";
-    mood.recommended_category = /吃|饭|饿/.test(text) ? "韩餐" : "咖啡";
-    mood.confidence = 0.78;
-  }
-
-  if (/热闹|多人|组局|嗨|唱歌|桌游/.test(text)) {
-    mood.mood_label = "想热闹一点";
-    mood.user_state = "可以接受多人互动";
-    mood.energy = "高";
-    mood.social_style = "多人热闹";
-    mood.activity_strategy = "优先安排 KTV、桌游或夜宵小组，保证人数和时段明确";
-    mood.recommended_activity = /唱|KTV|ktv/.test(lower) ? "KTV搭子" : /桌游|狼人|阿瓦隆/.test(text) ? "聚会桌游搭子" : "夜宵搭子";
-    mood.recommended_category = /唱|KTV|ktv/.test(lower) ? "KTV" : /桌游|狼人|阿瓦隆/.test(text) ? "聚会桌游" : "夜宵";
-    mood.confidence = 0.82;
-  }
-
-  return mood;
-}
-
-function inputHasExplicitActivity(input) {
-  return /KTV|ktv|唱歌|K歌|酒吧|小酌|喝酒|咖啡|学习|夜宵|烧烤|跑团|TRPG|克苏鲁|桌游|狼人|阿瓦隆|攀岩|抱石|骑行|火锅|韩餐|韩国|日料|寿司|拉面|饭|吃/.test(String(input || ""));
-}
-
-function applyMoodIntentPatch(intent, mood, input) {
-  const next = { ...(intent || {}) };
-  if (!mood) return next;
-
-  const shouldPatchActivity = mood.confidence >= 0.76 && !inputHasExplicitActivity(input);
-  if (shouldPatchActivity && mood.recommended_activity) {
-    next.activity_type = mood.recommended_activity;
-    next.category_preference = mood.recommended_category;
-    next.category_explicit = true; // 情绪推断的品类作为硬约束，防止被下游覆盖
-    next.group_size = mood.energy === "高" ? "小组" : "1v1";
-    next.social_style = mood.social_style;
-    next.budget_min = Math.min(next.budget_min || 20, mood.recommended_category === "咖啡" ? 20 : 40);
-    next.budget_max = mood.recommended_category === "咖啡" ? 45 : Math.max(next.budget_max || 80, 80);
-    next.distance_tolerance_km = Math.min(next.distance_tolerance_km || 2, 2);
-    next.target_time = /今天|现在|马上/.test(input) ? "现在" : next.target_time || "今晚";
-    next.interest_labels = [...new Set([next.category_preference, next.social_style, next.activity_type, next.target_time].filter(Boolean))];
-    next.parse_layer = "emotion_enriched";
-    next.parse_confidence = Math.max(next.parse_confidence || 0.7, mood.confidence);
-  } else if (mood.confidence >= 0.76) {
-    next.social_style = /安静|不想说话/.test(input) ? "安静陪伴" : next.social_style;
-    next.parse_layer = next.parse_layer === "agent_enriched" ? next.parse_layer : "emotion_aware";
-    next.parse_confidence = Math.max(next.parse_confidence || 0.7, Math.min(0.92, mood.confidence));
-  }
-  return next;
 }
 
 async function runAI() {
   if (appState.aiLoading) return;
-  if (!parseIntent || !runMatching) {
+  if (!runMatching) {
     showToast("匹配模块未加载，请刷新页面");
     return;
   }
@@ -179,9 +106,9 @@ async function runAI() {
   appState.aiFilterReason = "";
   render();
   try {
-    appState.aiMoodProfile = analyzeMoodNLP(appState.userInput);
-    appState.parsedIntent = applyMoodIntentPatch(parseIntent(appState.userInput), appState.aiMoodProfile, appState.userInput);
-    updateMatchAnimationStatus("已理解你的需求，正在扫描附近候选...");
+    // 中性占位，仅为扫描动画提供候选；用户语义/情绪的理解完全交给下方的 Gemini。
+    appState.parsedIntent = neutralIntent();
+    updateMatchAnimationStatus("正在理解你的需求...");
     await sleep(420);
 
     const candidateTargets = [2, 4, 6, 8];
@@ -195,11 +122,21 @@ async function runAI() {
     rerunMatching();
     appState.matchPreviewUsers = appState.matchResults.slice(0, 3);
     appState.matchAnimPhase = "search";
-    updateMatchAnimationStatus("正在计算最佳组合...");
+    updateMatchAnimationStatus("AI 正在理解语义与情绪...");
     await sleep(2400);
 
+    // 唯一的 NLP 入口：Gemini 读取 user_input，产出 intent / 情绪 / poi_filter / 方案叙述。
     const { availablePOIs } = getMatchSupply();
-    await enrichWithAIDirector(availablePOIs);
+    const director = await enrichWithAIDirector(availablePOIs);
+    if (!director || appState.aiRuleFallback) {
+      // Gemini 不可用：诚实置空，不用规则假装有 NLP，交给重试 UI。
+      appState.matchResults = [];
+      appState.matchPreviewUsers = [];
+      appState.aiDirector = null;
+      appState.generatedPlan = null;
+      if (!appState.aiAgentError) appState.aiAgentError = "AI 暂时不可用";
+      return;
+    }
     appState.matchAnimPhase = "done";
     updateMatchAnimationStatus("即将为你展示结果...");
     await sleep(480);
@@ -208,14 +145,13 @@ async function runAI() {
     }
   } catch (error) {
     console.error("[runAI]", error);
-    appState.aiAgentError = error.message || "匹配过程出错";
+    // 纯 Gemini 模式：任何失败都如实暴露，不再退回本地规则。
+    appState.matchResults = [];
+    appState.matchPreviewUsers = [];
+    appState.aiDirector = null;
+    appState.generatedPlan = null;
     appState.aiRuleFallback = true;
-    if (!appState.aiMoodProfile) appState.aiMoodProfile = analyzeMoodNLP(appState.userInput || "");
-    if (!appState.parsedIntent) {
-      appState.parsedIntent = applyMoodIntentPatch(parseIntent(appState.userInput || ""), appState.aiMoodProfile, appState.userInput || "");
-    }
-    if (!appState.matchResults.length) rerunMatching();
-    showToast("匹配遇到问题，请重试");
+    appState.aiAgentError = error.message || "AI 暂时不可用";
   } finally {
     appState.aiLoading = false;
     appState.aiStep = -1;
@@ -229,42 +165,6 @@ async function runAI() {
 function updateMatchAnimationStatus(text) {
   const footer = document.getElementById("matchAnimFooter");
   if (footer) footer.textContent = text;
-}
-
-function buildRuleOnlyDirectorFallback() {
-  const intent = appState.parsedIntent || {};
-  const mood = appState.aiMoodProfile || {};
-  const top = appState.matchResults[0];
-  return {
-    director_brief: top
-      ? `已为你找到 ${appState.matchResults.length} 个方案，首选「${top.poi.name}」，预计等待 ${top.poi.wait_time_min} 分钟，综合评分 ${top.total_score}%。`
-      : "已分析你的需求，正在优化方案组合。",
-    clarifying_questions: (intent.parse_confidence || 1) < 0.55
-      ? ["预算大概多少？", "更想 1v1 还是小组？"]
-      : [],
-    plan_overrides: appState.matchResults.slice(0, 3).map((match, plan_index) => ({
-      plan_index,
-      match_id: match.match_id,
-      headline: `与 ${match.user.nickname} · ${match.poi.name}`,
-      explanation: match.explanation,
-      closing_line: "推荐此方案",
-      risk: "",
-      conversion_prompt: match.poi.deal_text || "查看团购",
-      score_reason: "综合评分"
-    })),
-    agent_profile: {
-      mood_label: mood.mood_label || intent.social_style || "需求明确",
-      user_state: mood.user_state || "已识别你的出行状态",
-      activity_strategy: `优先匹配${intent.activity_type || "附近活动"}，结合预算与距离综合排序`,
-      confidence: intent.parse_confidence || 0.84,
-      score_basis: "已完成意图分析与搭子评分"
-    },
-    merchant_layer: {
-      summary: top ? `找到 ${appState.matchResults.length} 个高匹配方案` : "方案生成中",
-      freshness_label: "实时匹配"
-    },
-    demo_hooks: []
-  };
 }
 
 function buildAIDirectorPayload(availablePOIs) {
@@ -469,12 +369,12 @@ async function enrichWithAIDirector(availablePOIs, options = {}) {
     applyDirectorPlanOverrides(director);
     return director;
   } catch (error) {
-    console.warn("[ai-agent-fallback]", error);
-    appState.aiAgentError = error.message || "AI agent unavailable";
+    // 纯 Gemini 模式：不再用规则层伪造 director，失败如实上报给调用方处理。
+    console.warn("[ai-agent-unavailable]", error);
+    appState.aiAgentError = error.message || "AI 暂时不可用";
     appState.aiRuleFallback = true;
-    appState.aiDirector = buildRuleOnlyDirectorFallback();
-    applyDirectorPlanOverrides(appState.aiDirector);
-    return appState.aiDirector;
+    appState.aiDirector = null;
+    return null;
   }
 }
 
@@ -544,48 +444,27 @@ async function requestAIChatReply(messageText) {
   return String(data.reply || "").trim();
 }
 
-function buildLocalPeerReply(messageText) {
-  const text = String(messageText || "");
-  const match = appState.selectedMatch || {};
-  const poiName = match.poi?.name || "这家店";
-  if (/确认|可以|行|ok|OK|没问题|就这个|定/.test(text)) return `可以，就按 ${match.suggested_time || "这个时间"} 定吧。`;
-  if (/换|别的|另一家|这家不/.test(text)) return "可以，你发候选我看一下。";
-  if (/晚|迟|改时间|时间/.test(text)) return "可以，晚一点我也能到。";
-  if (/预算|贵|便宜|钱|人均/.test(text)) return "可以，预算控制一下就行。";
-  if (/排队|等|人多/.test(text)) return "那先看等待，太久就换附近的。";
-  if (/到了|出发|路上/.test(text)) return "收到，我也准备出发。";
-  return `${poiName} 我可以，时间你定。`;
-}
-
 async function appendAIPeerReply(messageText) {
   if (!appState.chatThread || !appState.selectedMatch || appState.chatReplyLoading) return;
   const pendingId = `pending_${Date.now()}`;
   appState.chatReplyLoading = true;
   appState.chatThread.messages.push({ id: pendingId, sender: "matched_user", text: "正在输入...", timestamp: nowTime(), pending: true });
   render();
-  let reply = "";
   try {
-    reply = await requestAIChatReply(messageText);
+    const reply = await requestAIChatReply(messageText);
+    appState.chatThread.messages = appState.chatThread.messages.filter((item) => item.id !== pendingId);
+    if (!reply) throw new Error("对方回复为空");
+    appState.chatThread.messages.push({ sender: "matched_user", text: reply, timestamp: nowTime() });
   } catch (error) {
-    console.warn("[chat-reply-fallback]", error);
-    reply = buildLocalPeerReply(messageText);
+    // 纯 Gemini 模式：失败不再用本地模板伪造对方回复，如实提示并让用户重发。
+    console.warn("[chat-reply-error]", error);
+    appState.chatThread.messages = appState.chatThread.messages.filter((item) => item.id !== pendingId);
+    appState.chatThread.messages.push({ sender: "ai", text: "（AI 暂时不可用，对方未能回复，请稍后重发）", timestamp: nowTime() });
+    showToast("AI 回复失败，请重试");
+  } finally {
+    appState.chatReplyLoading = false;
+    render();
   }
-  appState.chatThread.messages = appState.chatThread.messages.filter((item) => item.id !== pendingId);
-  appState.chatThread.messages.push({ sender: "matched_user", text: reply || buildLocalPeerReply(messageText), timestamp: nowTime() });
-  appState.chatReplyLoading = false;
-  render();
-}
-
-function buildLocalGCReply(gc, messageText) {
-  const text = String(messageText || "");
-  const poiName = gc?.poi?.name || "这家";
-  if (/到了|到门口|在外面/.test(text)) return "来了，稍等我一下。";
-  if (/路上|出发|快到/.test(text)) return "好，我也快到了。";
-  if (/等|排队|几号/.test(text)) return "叫的号，等一下吧。";
-  if (/点什么|吃什么|推荐|菜/.test(text)) return `${poiName} 这里招牌不错，你看看。`;
-  if (/收到|ok|好的|嗯/.test(text)) return "嗯，我看着呢。";
-  if (/怎么走|导航|路线/.test(text)) return "直接导航过来就行，不远。";
-  return "收到，马上过去！";
 }
 
 async function appendGCPeerReply(gc, messageText) {
@@ -595,7 +474,6 @@ async function appendGCPeerReply(gc, messageText) {
   const peerNickname = gc.members.find((m) => !m.isMe)?.nickname || "搭子";
   gc.messages.push({ id: pendingId, sender: "matched_user", text: "正在输入...", timestamp: nowTime(), pending: true, _peerName: peerNickname });
   render();
-  let reply = "";
   try {
     const payload = {
       message: messageText,
@@ -609,18 +487,20 @@ async function appendGCPeerReply(gc, messageText) {
       chat_history: gc.messages.slice(-8).filter((m) => !m.pending).map((m) => ({ sender: m.sender, text: m.text, timestamp: m.timestamp }))
     };
     const { response, data } = await postJSONWithFallback("/api/chat-reply", payload, { timeoutMs: 10000 });
-    if (response.ok && !data.fallback && data.reply) {
-      reply = String(data.reply).trim();
-    } else {
-      reply = buildLocalGCReply(gc, messageText);
-    }
-  } catch (_err) {
-    reply = buildLocalGCReply(gc, messageText);
+    if (!response.ok || data.fallback || !data.reply) throw new Error(data.error || "群聊回复接口不可用");
+    appState.aiProvider = data.provider || appState.aiProvider || "";
+    gc.messages = gc.messages.filter((m) => m.id !== pendingId);
+    gc.messages.push({ sender: "matched_user", text: String(data.reply).trim(), timestamp: nowTime() });
+  } catch (err) {
+    // 纯 Gemini 模式：失败不再套本地模板，如实提示并让用户重发。
+    console.warn("[gc-reply-error]", err);
+    gc.messages = gc.messages.filter((m) => m.id !== pendingId);
+    gc.messages.push({ sender: "system", text: "AI 暂时不可用，未能生成回复，请稍后重发。", timestamp: nowTime() });
+    showToast("AI 回复失败，请重试");
+  } finally {
+    gc._replyLoading = false;
+    render();
   }
-  gc.messages = gc.messages.filter((m) => m.id !== pendingId);
-  gc.messages.push({ sender: "matched_user", text: reply, timestamp: nowTime() });
-  gc._replyLoading = false;
-  render();
 }
 
 const MATCH_INSPIRE_PROMPTS = [
@@ -1190,6 +1070,7 @@ function renderAIPage() {
     if (tagHost) tagHost.outerHTML = renderAITagPills();
   });
   $("#runAIButton")?.addEventListener("click", runAI);
+  $("#retryAIButton")?.addEventListener("click", runAI);
   $("#openPreferenceDrawer")?.addEventListener("click", () => {
     appState.preferenceDrawerOpen = true;
     render();
@@ -1450,6 +1331,16 @@ function renderPlanCompareTable() {
 
 function renderMatchResults() {
   if (appState.aiLoading) return "";
+  // 纯 Gemini 模式：AI 不可用时如实提示并提供重试，绝不退回本地规则伪装 NLP。
+  if (appState.aiAgentError && !appState.matchResults.length && appState.aiHasRun) {
+    return `
+      <section class="${TW.card} ${TW.emptyState} result-fade" style="text-align:center;">
+        <h2>AI 暂时不可用</h2>
+        <p style="margin-top:6px;color:#6b7280;">本局完全由 AI 理解你的需求（${escapeHTML(appState.aiAgentError)}）。请检查网络后重试。</p>
+        <button type="button" id="retryAIButton" class="match-start-btn" style="margin-top:14px;">重新理解并匹配</button>
+      </section>
+    `;
+  }
   if (!appState.matchResults.length && appState.aiHasRun) {
     return `
       <section class="${TW.card} ${TW.emptyState} result-fade">
